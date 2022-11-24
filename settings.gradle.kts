@@ -14,7 +14,10 @@ include(
     "paper-mojang-api",
     "test-plugin",
     "fabric-loader",
-    "fabric-loader:minecraft"
+    "fabric-loader:minecraft",
+    "paperclip",
+    "paperclip:java6",
+    "paperclip:java17"
 )
 
 if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {

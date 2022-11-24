@@ -1,11 +1,8 @@
 import io.papermc.paperweight.patcher.tasks.CheckoutRepo
 import io.papermc.paperweight.patcher.tasks.SimpleApplyGitPatches
 import io.papermc.paperweight.patcher.tasks.SimpleRebuildGitPatches
-import io.papermc.paperweight.tasks.ApplyGitPatches
-import io.papermc.paperweight.util.cache
 import io.papermc.paperweight.util.cacheDir
 import io.papermc.paperweight.util.constants.PAPERCLIP_CONFIG
-import io.papermc.paperweight.util.constants.UPSTREAM_WORK_DIR_PROPERTY
 
 plugins {
     java
@@ -119,6 +116,48 @@ tasks {
         )
     }
 
+    fun createPatchTasks(orgName: String, projectName: String, patchDirName: String, taskName: String, refPropertyName: String) {
+        val projPatchDir = layout.projectDirectory.dir("patches/$patchDirName")
+        val projectDir = layout.projectDirectory.dir(projectName.toLowerCase())
+        val refCommit = providers.gradleProperty(refPropertyName).get()
+
+        val applyPaperServerPatchTask = getByName<SimpleApplyGitPatches>("applyServerPatches")
+
+        val checkOutRepoTask = register<CheckoutRepo>("clone$taskName") {
+            group = "papyrus"
+            repoName.set(patchDirName)
+            url.set(github(orgName, projectName))
+            ref.set(refCommit)
+            workDir.set(layout.cacheDir(io.papermc.paperweight.util.constants.UPSTREAMS))
+        }
+
+        register<SimpleApplyGitPatches>("apply${taskName}Patches") {
+            dependsOn(checkOutRepoTask)
+            group = "papyrus"
+            bareDirectory.set(true) // Set this to true because without the git recreation it won't work for some reason.
+            devImports.set(paperweight.devImports)
+            upstreamBranch.set("master")
+            mcDevSources.set(paperweight.mcDevSourceDir)
+            sourceMcDevJar.set(applyPaperServerPatchTask.sourceMcDevJar)
+            upstreamDir.set(checkOutRepoTask.get().outputDir)
+            patchDir.set(projPatchDir)
+            outputDir.set(projectDir)
+        }
+
+        register<SimpleRebuildGitPatches>("rebuild${taskName}Patches") {
+            group = "papyrus"
+            patchDir.set(projPatchDir)
+            inputDir.set(projectDir)
+
+            baseRef.set("base")
+        }
+    }
+
+    createPatchTasks("FabricMC", "fabric-loader", "fabricloader", "FabricLoader", "fabricloaderRef")
+    createPatchTasks("PaperMC", "Paperclip", "paperclip", "Paperclip", "paperclipRef")
+
+    // FABRIC LOADER PATCH SYSTEM
+    /*
     val fabricPatchDir = layout.projectDirectory.dir("patches/fabricloader")
     val fabricProjectDir = layout.projectDirectory.dir("fabric-loader")
     val fabricRefCommit = providers.gradleProperty("fabricloaderRef").get()
@@ -153,6 +192,12 @@ tasks {
 
         baseRef.set(fabricRefCommit)
     }
+
+     */
+
+    // PAPERCLIP PATCH SYSTEM
+
+
 }
 
 fun github(owner: String, repo: String): String {
