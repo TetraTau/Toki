@@ -1,16 +1,27 @@
-import io.papermc.paperweight.util.constants.*
+import io.papermc.paperweight.patcher.tasks.CheckoutRepo
+import io.papermc.paperweight.patcher.tasks.SimpleApplyGitPatches
+import io.papermc.paperweight.patcher.tasks.SimpleRebuildGitPatches
+import io.papermc.paperweight.tasks.ApplyGitPatches
+import io.papermc.paperweight.util.cache
+import io.papermc.paperweight.util.cacheDir
+import io.papermc.paperweight.util.constants.PAPERCLIP_CONFIG
+import io.papermc.paperweight.util.constants.UPSTREAM_WORK_DIR_PROPERTY
 
 plugins {
     java
     `maven-publish`
     id("com.github.johnrengelman.shadow") version "7.1.2" apply false
-    id("io.papermc.paperweight.patcher") version "1.3.8"
+    id("io.papermc.paperweight.patcher") version "1.3.11"
 }
+
+//apply<net.tetratau.papyrus.PapyrusPlugin>()
+
+val paperMavenPublicUrl = "https://papermc.io/repo/repository/maven-public/"
 
 repositories {
     mavenCentral()
     mavenLocal()
-    maven("https://papermc.io/repo/repository/maven-public/") {
+    maven(paperMavenPublicUrl) {
         content { onlyForConfigurations(PAPERCLIP_CONFIG) }
     }
 }
@@ -51,11 +62,12 @@ subprojects {
     }
 }
 
+val fabricLoaderRefCommit = providers.gradleProperty("fabricloaderRef").get()
+
 paperweight {
     serverProject.set(project(":paper-server"))
-
-    remapRepo.set("https://maven.fabricmc.net/")
-    decompileRepo.set("https://files.minecraftforge.net/maven/")
+    remapRepo.set(paperMavenPublicUrl)
+    decompileRepo.set(paperMavenPublicUrl)
 
     usePaperUpstream(providers.gradleProperty("paperRef")) {
         withPaperPatcher {
@@ -74,12 +86,28 @@ paperweight {
             }
         }
     }
+// An alternative solution which looks better but doesn't work.
+/*
+    useStandardUpstream("fabricloader") {
+        url.set(github("FabricMC", "fabric-loader"))
+        ref.set(fabricLoaderRefCommit)
+        useForUpstreamData.set(false)
+        patchTasks {
+            register("fabricloader") {
+                isBareDirectory.set(false)
+                upstreamDirPath.set("/")
+                patchDir.set(layout.projectDirectory.dir("patches/fabricloader"))
+                outputDir.set(layout.projectDirectory.dir("fabric-loader"))
+            }
+        }
+    }
+ */
 }
 
 tasks {
     generateDevelopmentBundle {
-        apiCoordinates.set("io.tau.tauserver:paper-api")
-        mojangApiCoordinates.set("io.tau.tauserver:mojang-api")
+        apiCoordinates.set("net.tetratau.papyrus:paper-api")
+        mojangApiCoordinates.set("net.tetratau.papyrus:mojang-api")
         libraryRepositories.set(
             listOf(
                 "https://repo.maven.apache.org/maven2/",
@@ -90,6 +118,45 @@ tasks {
             )
         )
     }
+
+    val fabricPatchDir = layout.projectDirectory.dir("patches/fabricloader")
+    val fabricProjectDir = layout.projectDirectory.dir("fabric-loader")
+    val fabricRefCommit = providers.gradleProperty("fabricloaderRef").get()
+
+    val applyPaperServerPatchTask = getByName<SimpleApplyGitPatches>("applyServerPatches")
+
+    val checkOutRepoTask = register<CheckoutRepo>("cloneFabricLoader") {
+        group = "papyrus"
+        repoName.set("fabricloader")
+        url.set(github("FabricMC", "fabric-loader"))
+        ref.set(fabricRefCommit)
+        workDir.set(layout.cacheDir(io.papermc.paperweight.util.constants.UPSTREAMS))
+    }
+
+    register<SimpleApplyGitPatches>("applyFabricLoaderPatches") {
+        dependsOn(checkOutRepoTask)
+        group = "papyrus"
+        bareDirectory.set(true) // Set this to true because without the git recreation it won't work for some reason.
+        devImports.set(paperweight.devImports)
+        upstreamBranch.set("master")
+        mcDevSources.set(paperweight.mcDevSourceDir)
+        sourceMcDevJar.set(applyPaperServerPatchTask.sourceMcDevJar)
+        upstreamDir.set(checkOutRepoTask.get().outputDir)
+        patchDir.set(fabricPatchDir)
+        outputDir.set(fabricProjectDir)
+    }
+
+    register<SimpleRebuildGitPatches>("rebuildFabricLoaderPatches") {
+        group = "papyrus"
+        patchDir.set(fabricPatchDir)
+        inputDir.set(fabricProjectDir)
+
+        baseRef.set(fabricRefCommit)
+    }
+}
+
+fun github(owner: String, repo: String): String {
+    return "https://github.com/$owner/$repo.git"
 }
 
 allprojects {
