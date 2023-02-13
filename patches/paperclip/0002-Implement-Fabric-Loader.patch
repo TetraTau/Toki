@@ -1,0 +1,1812 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Denery <dorofeevij@gmail.com>
+Date: Mon, 13 Feb 2023 17:16:34 +0300
+Subject: [PATCH] Implement Fabric Loader
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index f18f9609e0878c861b30f038bf6bf03bdb4b5072..4ec6216ea1d46c722dd5fbb2960d28ad1af567f5 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -21,6 +21,7 @@ tasks.jar {
+ 
+     from(zipTree(java6Jar.map { it.outputs.files.singleFile }))
+     from(zipTree(java17Jar.map { it.outputs.files.singleFile }))
++    from(project(":fabric-loader").tasks.named("fatJar").map { it.outputs.files.singleFile })
+ 
+     manifest {
+         attributes(
+diff --git a/java17/build.gradle.kts b/java17/build.gradle.kts
+index bfa5d895aa11a3af3f3782749442ba137bb43edd..2df563db84620719f69433e6f0a46dae142ac55e 100644
+--- a/java17/build.gradle.kts
++++ b/java17/build.gradle.kts
+@@ -21,11 +21,16 @@ repositories {
+ 
+ dependencies {
+     implementation("io.sigpipe:jbsdiff:1.0")
++    // Toki start - implement fabric loader
++    implementation("org.sharegov:mjson:1.4.1") {
++        isTransitive = false
++    }
++    // Toki end
+ }
+ 
+ tasks.shadowJar {
+     val prefix = "paperclip.libs"
+-    listOf("org.apache", "org.tukaani", "io.sigpipe").forEach { pack ->
++    listOf("org.apache", "org.tukaani", "io.sigpipe", "mjson").forEach { pack -> // Toki - implement fabric loader
+         relocate(pack, "$prefix.$pack")
+     }
+ 
+diff --git a/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd3366ade91f8
+--- /dev/null
++++ b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
+@@ -0,0 +1,225 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package io.papermc.paperclip;
++
++import static java.nio.file.StandardOpenOption.CREATE;
++import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
++import static java.nio.file.StandardOpenOption.WRITE;
++
++import java.io.File;
++import java.io.IOException;
++import java.io.InputStream;
++import java.net.MalformedURLException;
++import java.net.URISyntaxException;
++import java.net.URL;
++import java.net.URLClassLoader;
++import java.nio.channels.Channels;
++import java.nio.channels.FileChannel;
++import java.nio.channels.ReadableByteChannel;
++import java.nio.file.CopyOption;
++import java.nio.file.FileStore;
++import java.nio.file.FileSystem;
++import java.nio.file.FileSystems;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.Paths;
++import java.nio.file.StandardCopyOption;
++import java.security.CodeSource;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.StringTokenizer;
++import java.util.jar.Attributes;
++import java.util.jar.JarFile;
++import java.util.jar.Manifest;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipError;
++import java.util.zip.ZipInputStream;
++
++import mjson.Json;
++import net.fabricmc.installer.LoaderVersion;
++import net.fabricmc.installer.server.ServerInstaller;
++import net.fabricmc.installer.util.InstallerProgress;
++
++/**
++ * Mainly copied from the net.fabricmc.installer.ServerLauncher class.
++ */
++public final class FabricInstaller {
++	private static final Path DATA_DIR = Paths.get(".fabric", "server");
++
++	public static LaunchData initialize(LoaderVersion loaderVersion, String gameVersion) {
++
++		try {
++			final Path baseDir = Paths.get(".").toAbsolutePath().normalize();
++			final Path dataDir = baseDir.resolve(DATA_DIR);
++
++			// Includes the mc version as this jar contains intermediary
++			Path serverLaunchJar = dataDir.resolve(String.format("fabric-loader-server-%s-minecraft-%s.jar", loaderVersion.name, gameVersion));
++			if (Files.exists(serverLaunchJar)) {
++				try {
++					List<Path> classPath = new ArrayList<>();
++					String mainClass = readManifest(serverLaunchJar, classPath);
++					boolean allPresent = true;
++
++					for (Path file : classPath) {
++						if (!Files.exists(file)) {
++							allPresent = false;
++							break;
++						}
++					}
++
++					if (allPresent) {
++						// All seems good, no need to reinstall
++						return new LaunchData(serverLaunchJar, mainClass);
++					} else {
++						System.err.println("Detected incomplete install, reinstalling");
++					}
++				} catch (IOException | ZipError e) {
++					// Wont throw here, will try to reinstall
++					System.err.println("Failed to analyze or verify existing install: " + e.getMessage());
++				}
++			}
++
++			Files.createDirectories(dataDir);
++			ServerInstaller.install(baseDir, loaderVersion, gameVersion, InstallerProgress.CONSOLE, serverLaunchJar);
++
++			String mainClass = readManifest(serverLaunchJar, null);
++			return new LaunchData(serverLaunchJar, mainClass);
++		} catch (final IOException e) {
++			throw new RuntimeException("Something went wrong while installing fabric loader: " + e);
++		}
++	}
++
++	public static LaunchData initialize() {
++		try {
++			final Path fabricLoaderOutput = FabricInstaller.extractFabricLoaderToCache();
++			return FabricInstaller.initialize(new net.fabricmc.installer.LoaderVersion(fabricLoaderOutput), "1.19.2");
++		} catch (final IOException e) {
++			throw new IllegalStateException("Failed to install fabric loader: ", e);
++		}
++	}
++
++	// Find the mainclass of a jar file
++	private static String readManifest(Path path, List<Path> classPathOut) throws IOException {
++		try (JarFile jarFile = new JarFile(path.toFile())) {
++			Manifest manifest = jarFile.getManifest();
++			String mainClass = manifest.getMainAttributes().getValue(Attributes.Name.MAIN_CLASS);
++
++			if (mainClass == null) {
++				throw new IOException("Jar does not have a Main-Class attribute");
++			}
++
++			if (classPathOut != null) {
++				String cp = manifest.getMainAttributes().getValue(Attributes.Name.CLASS_PATH);
++
++				StringTokenizer tokenizer = new StringTokenizer(cp);
++				URL baseUrl = path.toUri().toURL();
++
++				while (tokenizer.hasMoreTokens()) {
++					String token = tokenizer.nextToken();
++					URL url = new URL(baseUrl, token);
++
++					try {
++						classPathOut.add(Paths.get(url.toURI()));
++					} catch (URISyntaxException e) {
++						throw new IOException(String.format("invalid class path entry in %s manifest: %s", path, token));
++					}
++				}
++			}
++
++			return mainClass;
++		}
++	}
++
++	/**
++	 * Extracts fabric loader to the given folder.
++	 * @param output folder where you want to extract.
++	 */
++	public static Path extractFabricLoader(final Path output) {
++		final CodeSource src = FabricInstaller.class.getProtectionDomain().getCodeSource();
++		if (src != null) {
++			URL jar = src.getLocation();
++			try (final ZipInputStream zipInputStream = new ZipInputStream(jar.openStream())) {
++				for (ZipEntry zipEntry = zipInputStream.getNextEntry(); zipEntry != null; zipEntry = zipInputStream.getNextEntry()) {
++					if (zipEntry.getName().startsWith("fabric-loader")) {
++						final Path outputFile = output.resolve(zipEntry.getName());
++						try (
++								final ReadableByteChannel inputChannel = Channels.newChannel(zipInputStream);
++								final FileChannel outputChannel = FileChannel.open(outputFile, CREATE, WRITE, TRUNCATE_EXISTING)
++						) {
++							outputChannel.transferFrom(inputChannel, 0, Long.MAX_VALUE);
++						}
++						return outputFile;
++					}
++				}
++				throw new IllegalStateException("Didn't find any fabric loader in the paperclip jar!");
++			} catch (final Throwable e) {
++				throw new IllegalStateException("Couldn't extract fabric loader from resources: ", e);
++			}
++		} else {
++			throw new IllegalStateException("Couldn't extract fabric loader from resources!");
++		}
++	}
++
++	public static Path extractFabricLoaderToCache() {
++		try {
++			final Path fabricLoaderOutput = Path.of(".toki");
++			Files.createDirectories(fabricLoaderOutput);
++			return FabricInstaller.extractFabricLoader(fabricLoaderOutput);
++		} catch (final IOException e) {
++			throw new IllegalStateException("Couldn't extract fabric loader: ", e);
++		}
++	}
++
++	public static URLClassLoader createFabricLoaderClassLoader(LaunchData launchData) {
++		try {
++			final ClassLoader parentClassLoader = Paperclip.class.getClassLoader().getParent();
++			URL[] urls = {launchData.launchJar().toUri().toURL()};
++			return new URLClassLoader(urls, parentClassLoader);
++		} catch (final MalformedURLException e) {
++			throw new IllegalStateException("Something went wrong in transforming URL while creating FabricLoader class loader: ", e);
++		}
++	}
++
++	public static void setLibraryURLs(final URL[] libraries) {
++		final String s = Json.make(Arrays.stream(libraries).map(URL::getPath).toList()).toString();
++		System.setProperty("toki.libraries", s); // Used in MinecraftGameProvider#unlockClassPath
++	}
++
++	/**
++	 *	Hacks MinecraftGameProvider data to an enum field so FabricLoader launches org.bukkit.craftbukkit.Main class.
++	 */
++	/* In case we'll want to use unmodified fabric loader.
++	public static void hackServerEntrypointsForBukkit(URLClassLoader launchClassLoader) throws ClassNotFoundException, NoSuchFieldException, IllegalAccessException {
++		final Class<?> mcLibraries = launchClassLoader.loadClass("net.fabricmc.loader.impl.game.minecraft.McLibrary");
++		for (final Enum<?> enumConstant : (Enum<?>[]) mcLibraries.getEnumConstants()) {
++			if (enumConstant.name().equals("MC_SERVER")) {
++				final Field paths = enumConstant.getClass().getDeclaredField("paths");
++				paths.setAccessible(true);
++				paths.set(enumConstant, SERVER_ENTRYPOINTS);
++				break;
++			}
++		}
++
++		// System.setProperty("fabric.debug.disableClassPathIsolation", "true");
++		System.setProperty("fabric.debug.logLibClassification", "true");
++
++	}
++	*/
++
++	public record LaunchData(Path launchJar, String mainClass) {}
++}
+diff --git a/java17/src/main/java/io/papermc/paperclip/Paperclip.java b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
+index a10744d8d489b9ef3b6fcad850885c719a66b90f..2262443c62987d63dbf8df93889c76d4280b750d 100644
+--- a/java17/src/main/java/io/papermc/paperclip/Paperclip.java
++++ b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
+@@ -1,5 +1,7 @@
+ package io.papermc.paperclip;
+ 
++import com.sun.tools.javac.Main;
++
+ import java.io.BufferedReader;
+ import java.io.IOException;
+ import java.io.InputStream;
+@@ -25,21 +27,30 @@ public final class Paperclip {
+             System.exit(1);
+         }
+ 
+-        final URL[] classpathUrls = setupClasspath();
+-
+-        final ClassLoader parentClassLoader = Paperclip.class.getClassLoader().getParent();
+-        final URLClassLoader classLoader = new URLClassLoader(classpathUrls, parentClassLoader);
++		//System.setProperty("fabric.debug.logLibClassification", "true");
++		FabricInstaller.LaunchData launchData = FabricInstaller.initialize(); // Toki
++		final URL[] classpathUrls = setupClasspath();
++		FabricInstaller.setLibraryURLs(classpathUrls); // Toki
++		final URLClassLoader classLoader = FabricInstaller.createFabricLoaderClassLoader(launchData); // Toki
+ 
+-        final String mainClassName = findMainClass();
+-        System.out.println("Starting " + mainClassName);
++		final String mainClassName = findMainClass();
++		System.setProperty("toki.main", "org/bukkit/craftbukkit/Main.class"); // Toki - Used in fabric loader in McLibrary
++        System.out.println("Starting " + launchData.mainClass()); // Toki - implement fabric loader
+ 
+         final Thread runThread = new Thread(() -> {
+             try {
++				// Toki start - implement fabric loader
++				Class<?> fabricLoaderMain = classLoader.loadClass(launchData.mainClass());
++				// Launches FabricLoader
++				final MethodHandle handle = MethodHandles.publicLookup().findStatic(fabricLoaderMain, "main", MethodType.methodType(void.class, String[].class));
++				handle.invokeExact(args);
++				/* Toki end
+                 final Class<?> mainClass = Class.forName(mainClassName, true, classLoader);
+                 final MethodHandle mainHandle = MethodHandles.lookup()
+                     .findStatic(mainClass, "main", MethodType.methodType(void.class, String[].class))
+                     .asFixedArity();
+                 mainHandle.invoke((Object) args);
++				 */ // Toki
+             } catch (final Throwable t) {
+                 throw Util.sneakyThrow(t);
+             }
+@@ -81,11 +92,16 @@ public final class Paperclip {
+         final Collection<URL> versionUrls = classpathUrls.get("versions").values();
+         final Collection<URL> libraryUrls = classpathUrls.get("libraries").values();
+ 
++		System.out.println("version urls: " + versionUrls);
++		System.setProperty("fabric.gameJarPath", versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).getPath()); // Toky - implement fabric loader
++
+         final URL[] emptyArray = new URL[0];
++		/*
+         final URL[] urls = new URL[versionUrls.size() + libraryUrls.size()];
+         System.arraycopy(versionUrls.toArray(emptyArray), 0, urls, 0, versionUrls.size());
+         System.arraycopy(libraryUrls.toArray(emptyArray), 0, urls, versionUrls.size(), libraryUrls.size());
+-        return urls;
++		 */
++        return libraryUrls.toArray(emptyArray);
+     }
+ 
+     private static PatchEntry[] findPatches() {
+diff --git a/java17/src/main/java/net/fabricmc/installer/LoaderVersion.java b/java17/src/main/java/net/fabricmc/installer/LoaderVersion.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b7b85708496ab6c72966f423eb74b8046917620d
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/LoaderVersion.java
+@@ -0,0 +1,57 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer;
++
++import java.io.FileNotFoundException;
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.file.Path;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipError;
++import java.util.zip.ZipFile;
++
++import mjson.Json;
++import net.fabricmc.installer.util.Utils;
++
++public final class LoaderVersion {
++	public final String name;
++	public final Path path;
++
++	public LoaderVersion(String name) {
++		this.name = name;
++		this.path = null;
++	}
++
++	public LoaderVersion(Path path) throws IOException {
++		try (ZipFile zf = new ZipFile(path.toFile())) {
++			ZipEntry entry = zf.getEntry("fabric.mod.json");
++			if (entry == null) throw new FileNotFoundException("fabric.mod.json");
++
++			String modJsonContent;
++
++			try (InputStream is = zf.getInputStream(entry)) {
++				modJsonContent = Utils.readString(is);
++			}
++
++			this.name = Json.read(modJsonContent).at("version").asString();
++		} catch (ZipError e) {
++			throw new IOException(e);
++		}
++
++		this.path = path;
++	}
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/server/ServerInstaller.java b/java17/src/main/java/net/fabricmc/installer/server/ServerInstaller.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..835cad857af07c5eb69d16362401bf2a3039e5fb
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/server/ServerInstaller.java
+@@ -0,0 +1,250 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.server;
++
++import java.io.BufferedReader;
++import java.io.BufferedWriter;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.InputStreamReader;
++import java.io.OutputStream;
++import java.io.OutputStreamWriter;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.text.MessageFormat;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.jar.Attributes;
++import java.util.jar.JarEntry;
++import java.util.jar.JarFile;
++import java.util.jar.JarInputStream;
++import java.util.jar.Manifest;
++import java.util.regex.Pattern;
++import java.util.stream.Collectors;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipFile;
++import java.util.zip.ZipOutputStream;
++
++import mjson.Json;
++import net.fabricmc.installer.LoaderVersion;
++import net.fabricmc.installer.util.FabricService;
++import net.fabricmc.installer.util.InstallerProgress;
++import net.fabricmc.installer.util.Library;
++import net.fabricmc.installer.util.Utils;
++
++public class ServerInstaller {
++	private static final String servicesDir = "META-INF/services/";
++	private static final String manifestPath = "META-INF/MANIFEST.MF";
++	public static final String DEFAULT_LAUNCH_JAR_NAME = "fabric-server-launch.jar";
++	private static final Pattern SIGNATURE_FILE_PATTERN = Pattern.compile("META-INF/[^/]+\\.(SF|DSA|RSA|EC)");
++
++	public static void install(Path dir, LoaderVersion loaderVersion, String gameVersion, InstallerProgress progress) throws IOException {
++		Path launchJar = dir.resolve(DEFAULT_LAUNCH_JAR_NAME);
++		install(dir, loaderVersion, gameVersion, progress, launchJar);
++	}
++
++	public static void install(Path dir, LoaderVersion loaderVersion, String gameVersion, InstallerProgress progress, Path launchJar) throws IOException {
++		progress.updateProgress(new MessageFormat(Utils.BUNDLE.getString("progress.installing.server")).format(new Object[]{String.format("%s(%s)", loaderVersion.name, gameVersion)}));
++
++		Files.createDirectories(dir);
++
++		Path libsDir = dir.resolve("libraries");
++		Files.createDirectories(libsDir);
++
++		progress.updateProgress(Utils.BUNDLE.getString("progress.download.libraries"));
++
++		List<Library> libraries = new ArrayList<>();
++		String mainClassMeta;
++
++		if (loaderVersion.path == null) { // loader jar unavailable, grab everything from meta
++			Json json = FabricService.queryMetaJson(String.format("v2/versions/loader/%s/%s/server/json", gameVersion, loaderVersion.name));
++
++			for (Json libraryJson : json.at("libraries").asJsonList()) {
++				libraries.add(new Library(libraryJson));
++			}
++
++			mainClassMeta = json.at("mainClass").asString();
++		} else { // loader jar available, generate library list from it
++			libraries.add(new Library(String.format("net.fabricmc:fabric-loader:%s", loaderVersion.name), null, loaderVersion.path));
++			libraries.add(new Library(String.format("net.fabricmc:intermediary:%s", gameVersion), "https://maven.fabricmc.net/", null));
++
++			try (ZipFile zf = new ZipFile(loaderVersion.path.toFile())) {
++				ZipEntry entry = zf.getEntry("fabric-installer.json");
++				Json json = Json.read(Utils.readString(zf.getInputStream(entry)));
++				Json librariesElem = json.at("libraries");
++
++				for (Json libraryJson : librariesElem.at("common").asJsonList()) {
++					libraries.add(new Library(libraryJson));
++				}
++
++				for (Json libraryJson : librariesElem.at("server").asJsonList()) {
++					libraries.add(new Library(libraryJson));
++				}
++
++				mainClassMeta = json.at("mainClass").at("server").asString();
++			}
++		}
++
++		String mainClassManifest = "net.fabricmc.loader.launch.server.FabricServerLauncher";
++		List<Path> libraryFiles = new ArrayList<>();
++
++		for (Library library : libraries) {
++			Path libraryFile = libsDir.resolve(library.getPath());
++
++			if (library.inputPath == null) {
++				progress.updateProgress(new MessageFormat(Utils.BUNDLE.getString("progress.download.library.entry")).format(new Object[]{library.name}));
++				FabricService.downloadSubstitutedMaven(library.getURL(), libraryFile);
++			} else {
++				Files.createDirectories(libraryFile.getParent());
++				Files.copy(library.inputPath, libraryFile, StandardCopyOption.REPLACE_EXISTING);
++			}
++
++			libraryFiles.add(libraryFile);
++
++			if (library.name.matches("net\\.fabricmc:fabric-loader:.*")) {
++				try (JarFile jarFile = new JarFile(libraryFile.toFile())) {
++					Manifest manifest = jarFile.getManifest();
++					mainClassManifest = manifest.getMainAttributes().getValue("Main-Class");
++				}
++			}
++		}
++
++		progress.updateProgress(Utils.BUNDLE.getString("progress.generating.launch.jar"));
++
++		boolean shadeLibraries = Utils.compareVersions(loaderVersion.name, "0.12.5") <= 0; // FabricServerLauncher in Fabric Loader 0.12.5 and earlier requires shading the libs into the launch jar
++		makeLaunchJar(launchJar, mainClassMeta, mainClassManifest, libraryFiles, shadeLibraries, progress);
++	}
++
++	private static void makeLaunchJar(Path file, String launchMainClass, String jarMainClass, List<Path> libraryFiles,
++			boolean shadeLibraries, InstallerProgress progress) throws IOException {
++		Files.deleteIfExists(file);
++
++		try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(file))) {
++			Set<String> addedEntries = new HashSet<>();
++
++			addedEntries.add(manifestPath);
++			zipOutputStream.putNextEntry(new ZipEntry(manifestPath));
++
++			Manifest manifest = new Manifest();
++			Attributes mainAttributes = manifest.getMainAttributes();
++
++			mainAttributes.put(Attributes.Name.MANIFEST_VERSION, "1.0");
++			mainAttributes.put(Attributes.Name.MAIN_CLASS, jarMainClass);
++
++			if (!shadeLibraries) {
++				mainAttributes.put(Attributes.Name.CLASS_PATH, libraryFiles.stream()
++						.map(f -> file.getParent().relativize(f).normalize().toString().replace("\\", "/"))
++						.collect(Collectors.joining(" ")));
++			}
++
++			manifest.write(zipOutputStream);
++
++			zipOutputStream.closeEntry();
++
++			addedEntries.add("fabric-server-launch.properties");
++			zipOutputStream.putNextEntry(new ZipEntry("fabric-server-launch.properties"));
++			zipOutputStream.write(("launch.mainClass=" + launchMainClass + "\n").getBytes(StandardCharsets.UTF_8));
++			zipOutputStream.closeEntry();
++
++			if (shadeLibraries) {
++				Map<String, Set<String>> services = new HashMap<>();
++				byte[] buffer = new byte[32768];
++
++				for (Path f : libraryFiles) {
++					progress.updateProgress(new MessageFormat(Utils.BUNDLE.getString("progress.generating.launch.jar.library")).format(new Object[]{f.getFileName().toString()}));
++
++					// read service definitions (merging them), copy other files
++					try (JarInputStream jis = new JarInputStream(Files.newInputStream(f))) {
++						JarEntry entry;
++
++						while ((entry = jis.getNextJarEntry()) != null) {
++							if (entry.isDirectory()) continue;
++
++							String name = entry.getName();
++
++							if (name.startsWith(servicesDir) && name.indexOf('/', servicesDir.length()) < 0) { // service definition file
++								parseServiceDefinition(name, jis, services);
++							} else if (SIGNATURE_FILE_PATTERN.matcher(name).matches()) {
++								// signature file, ignore
++							} else if (!addedEntries.add(name)) {
++								System.out.printf("duplicate file: %s%n", name);
++							} else {
++								JarEntry newEntry = new JarEntry(name);
++								zipOutputStream.putNextEntry(newEntry);
++
++								int r;
++
++								while ((r = jis.read(buffer, 0, buffer.length)) >= 0) {
++									zipOutputStream.write(buffer, 0, r);
++								}
++
++								zipOutputStream.closeEntry();
++							}
++						}
++					}
++				}
++
++				// write service definitions
++				for (Map.Entry<String, Set<String>> entry : services.entrySet()) {
++					JarEntry newEntry = new JarEntry(entry.getKey());
++					zipOutputStream.putNextEntry(newEntry);
++
++					writeServiceDefinition(entry.getValue(), zipOutputStream);
++
++					zipOutputStream.closeEntry();
++				}
++			}
++		}
++	}
++
++	private static void parseServiceDefinition(String name, InputStream rawIs, Map<String, Set<String>> services) throws IOException {
++		Collection<String> out = null;
++		BufferedReader reader = new BufferedReader(new InputStreamReader(rawIs, StandardCharsets.UTF_8));
++		String line;
++
++		while ((line = reader.readLine()) != null) {
++			int pos = line.indexOf('#');
++			if (pos >= 0) line = line.substring(0, pos);
++			line = line.trim();
++
++			if (!line.isEmpty()) {
++				if (out == null) out = services.computeIfAbsent(name, ignore -> new LinkedHashSet<>());
++
++				out.add(line);
++			}
++		}
++	}
++
++	private static void writeServiceDefinition(Collection<String> defs, OutputStream os) throws IOException {
++		BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8));
++
++		for (String def : defs) {
++			writer.write(def);
++			writer.write('\n');
++		}
++
++		writer.flush();
++	}
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/FabricService.java b/java17/src/main/java/net/fabricmc/installer/util/FabricService.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e47c9143043e05394052b2a8775daf9410d10138
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/FabricService.java
+@@ -0,0 +1,135 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++import java.io.IOException;
++import java.net.URL;
++import java.nio.file.Path;
++
++import mjson.Json;
++
++public final class FabricService {
++	private static int activeIndex = 0; // index into INSTANCES or -1 if set to a fixed service
++	private static FabricService fixedService;
++
++	private final String meta;
++	private final String maven;
++
++	/**
++	 * Query Fabric Meta path and decode as JSON.
++	 */
++	public static Json queryMetaJson(String path) throws IOException {
++		return invokeWithFallbacks((service, arg) -> Json.read(Utils.readString(new URL(service.meta + arg))), path);
++	}
++
++	/**
++	 * Query and decode JSON from url, substituting Fabric Maven with fallbacks or overrides.
++	 */
++	public static Json queryJsonSubstitutedMaven(String url) throws IOException {
++		if (!url.startsWith(Reference.DEFAULT_MAVEN_SERVER)) {
++			return Json.read(Utils.readString(new URL(url)));
++		}
++
++		String path = url.substring(Reference.DEFAULT_MAVEN_SERVER.length());
++
++		return invokeWithFallbacks((service, arg) -> Json.read(Utils.readString(new URL(service.maven + arg))), path);
++	}
++
++	/**
++	 * Download url to file, substituting Fabric Maven with fallbacks or overrides.
++	 */
++	public static void downloadSubstitutedMaven(String url, Path out) throws IOException {
++		if (!url.startsWith(Reference.DEFAULT_MAVEN_SERVER)) {
++			Utils.downloadFile(new URL(url), out);
++			return;
++		}
++
++		String path = url.substring(Reference.DEFAULT_MAVEN_SERVER.length());
++
++		invokeWithFallbacks((service, arg) -> {
++			Utils.downloadFile(new URL(service.maven + arg), out);
++			return null;
++		}, path);
++	}
++
++	private static <A, R> R invokeWithFallbacks(Handler<A, R> handler, A arg) throws IOException {
++		if (fixedService != null) return handler.apply(fixedService, arg);
++
++		int index = activeIndex;
++		IOException exc = null;
++
++		do {
++			FabricService service = Reference.FABRIC_SERVICES[index];
++
++			try {
++				R ret = handler.apply(service, arg);
++				activeIndex = index;
++
++				return ret;
++			} catch (IOException e) {
++				System.out.println("service "+service+" failed: "+e);
++
++				if (exc == null) {
++					exc = e;
++				} else {
++					exc.addSuppressed(e);
++				}
++			}
++
++			index = (index + 1) % Reference.FABRIC_SERVICES.length;
++		} while (index != activeIndex);
++
++		throw exc;
++	}
++
++	private interface Handler<A, R> {
++		R apply(FabricService service, A arg) throws IOException;
++	}
++
++	/**
++	 * Configure fixed service urls, disabling fallbacks or the defaults.
++	 */
++	public static void setFixed(String metaUrl, String mavenUrl) {
++		if (metaUrl == null && mavenUrl == null) throw new NullPointerException("both meta and maven are null");
++
++		if (metaUrl == null) metaUrl = Reference.DEFAULT_META_SERVER;
++		if (mavenUrl == null) mavenUrl = Reference.DEFAULT_MAVEN_SERVER;
++
++		activeIndex = -1;
++		fixedService = new FabricService(metaUrl, mavenUrl);
++	}
++
++	FabricService(String meta, String maven) {
++		this.meta = meta;
++		this.maven = maven;
++	}
++
++	public String getMetaUrl() {
++		return meta;
++	}
++
++	public String getMavenUrl() {
++		return maven;
++	}
++
++	@Override
++	public String toString() {
++		return "FabricService{"
++				+ "meta='" + meta + '\''
++				+ ", maven='" + maven + "'}";
++	}
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/InstallerProgress.java b/java17/src/main/java/net/fabricmc/installer/util/InstallerProgress.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5af3e5f33ad520592698158b6322ee472e44718f
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/InstallerProgress.java
+@@ -0,0 +1,35 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++public interface InstallerProgress {
++	InstallerProgress CONSOLE = new InstallerProgress() {
++		@Override
++		public void updateProgress(String text) {
++			System.out.println(text);
++		}
++
++		@Override
++		public void error(Throwable throwable) {
++			throw new RuntimeException(throwable);
++		}
++	};
++
++	void updateProgress(String text);
++
++	void error(Throwable throwable);
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/Library.java b/java17/src/main/java/net/fabricmc/installer/util/Library.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c844d7a40220962c5a431ce90f19a97f144c6f24
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/Library.java
+@@ -0,0 +1,54 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++import mjson.Json;
++
++import java.io.File;
++import java.nio.file.Path;
++
++public class Library {
++	public final String name;
++	public final String url;
++	public final Path inputPath;
++
++	public Library(String name, String url, Path inputPath) {
++		this.name = name;
++		this.url = url;
++		this.inputPath = inputPath;
++	}
++
++	public Library(Json json) {
++		name = json.at("name").asString();
++		url = json.at("url").asString();
++		inputPath = null;
++	}
++
++	public String getURL() {
++		String path;
++		String[] parts = this.name.split(":", 3);
++		path = parts[0].replace(".", "/") + "/" + parts[1] + "/" + parts[2] + "/" + parts[1] + "-" + parts[2] + ".jar";
++
++		return url + path;
++	}
++
++	public String getPath() {
++		String[] parts = this.name.split(":", 3);
++		String path = parts[0].replace(".", File.separator) + File.separator + parts[1] + File.separator + parts[2] + File.separator + parts[1] + "-" + parts[2] + ".jar";
++		return path.replaceAll(" ", "_");
++	}
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/OperatingSystem.java b/java17/src/main/java/net/fabricmc/installer/util/OperatingSystem.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a203eedca01992c96eaf9492083d5895d70cde95
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/OperatingSystem.java
+@@ -0,0 +1,39 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++import java.util.Locale;
++
++public enum OperatingSystem {
++	WINDOWS,
++	MACOS,
++	LINUX;
++
++	public static final OperatingSystem CURRENT = getCurrent();
++
++	private static OperatingSystem getCurrent() {
++		String osName = System.getProperty("os.name").toLowerCase(Locale.ENGLISH);
++
++		if (osName.contains("win")) {
++			return WINDOWS;
++		} else if (osName.contains("mac")) {
++			return MACOS;
++		} else {
++			return LINUX;
++		}
++	}
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/Reference.java b/java17/src/main/java/net/fabricmc/installer/util/Reference.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0bd809cdf137ceb3a926805e7b1f78a844511f92
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/Reference.java
+@@ -0,0 +1,36 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++public class Reference {
++	public static final String LOADER_NAME = "fabric-loader";
++
++	public static final String FABRIC_API_URL = "https://www.curseforge.com/minecraft/mc-mods/fabric-api/";
++	public static final String SERVER_LAUNCHER_URL = "https://fabricmc.net/use/server/";
++	public static final String MINECRAFT_LAUNCHER_MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
++	public static final String EXPERIMENTAL_LAUNCHER_MANIFEST = "https://maven.fabricmc.net/net/minecraft/experimental_versions.json";
++
++	static final String DEFAULT_META_SERVER = "https://meta.fabricmc.net/";
++	static final String DEFAULT_MAVEN_SERVER = "https://maven.fabricmc.net/";
++
++	static final FabricService[] FABRIC_SERVICES = {
++			new FabricService(DEFAULT_META_SERVER, DEFAULT_MAVEN_SERVER),
++			// Do not use these fallback servers to interact with our web services. They can and will be unavailable at times and only support limited throughput.
++			new FabricService("https://meta2.fabricmc.net/", "https://maven2.fabricmc.net/"),
++			new FabricService("https://meta3.fabricmc.net/", "https://maven3.fabricmc.net/")
++	};
++}
+diff --git a/java17/src/main/java/net/fabricmc/installer/util/Utils.java b/java17/src/main/java/net/fabricmc/installer/util/Utils.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..fd2ddf3f6a9e3bed7c5b7aaf5431fff7b4112aca
+--- /dev/null
++++ b/java17/src/main/java/net/fabricmc/installer/util/Utils.java
+@@ -0,0 +1,271 @@
++/*
++ * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package net.fabricmc.installer.util;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.InputStreamReader;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.Paths;
++import java.nio.file.StandardCopyOption;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.text.DateFormat;
++import java.text.SimpleDateFormat;
++import java.util.Arrays;
++import java.util.Base64;
++import java.util.Locale;
++import java.util.PropertyResourceBundle;
++import java.util.ResourceBundle;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++public class Utils {
++	public static final DateFormat ISO_8601 = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
++	public static final ResourceBundle BUNDLE = ResourceBundle.getBundle("lang/installer", Locale.getDefault(), new ResourceBundle.Control() {
++		@Override
++		public ResourceBundle newBundle(String baseName, Locale locale, String format, ClassLoader loader, boolean reload) throws IllegalAccessException, InstantiationException, IOException {
++			final String bundleName = toBundleName(baseName, locale);
++			final String resourceName = toResourceName(bundleName, "properties");
++
++			try (InputStream stream = loader.getResourceAsStream(resourceName)) {
++				if (stream != null) {
++					try (InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
++						return new PropertyResourceBundle(reader);
++					}
++				}
++			}
++
++			return super.newBundle(baseName, locale, format, loader, reload);
++		}
++	});
++
++	public static Path findDefaultInstallDir() {
++		Path dir;
++
++		if (OperatingSystem.CURRENT == OperatingSystem.WINDOWS && System.getenv("APPDATA") != null) {
++			dir = Paths.get(System.getenv("APPDATA")).resolve(".minecraft");
++		} else {
++			String home = System.getProperty("user.home", ".");
++			Path homeDir = Paths.get(home);
++
++			if (OperatingSystem.CURRENT == OperatingSystem.MACOS) {
++				dir = homeDir.resolve("Library").resolve("Application Support").resolve("minecraft");
++			} else {
++				dir = homeDir.resolve(".minecraft");
++
++				if (OperatingSystem.CURRENT == OperatingSystem.LINUX && !Files.exists(dir)) {
++					// https://github.com/flathub/com.mojang.Minecraft
++					final Path flatpack = homeDir.resolve(".var").resolve("app").resolve("com.mojang.Minecraft").resolve(".minecraft");
++
++					if (Files.exists(flatpack)) {
++						dir = flatpack;
++					}
++				}
++			}
++		}
++
++		return dir.toAbsolutePath().normalize();
++	}
++
++	public static String readString(URL url) throws IOException {
++		try (InputStream is = openUrl(url)) {
++			return readString(is);
++		}
++	}
++
++	public static String readString(Path path) throws IOException {
++		return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
++	}
++
++	public static String readString(InputStream is) throws IOException {
++		byte[] data = new byte[Math.max(1000, is.available())];
++		int offset = 0;
++		int len;
++
++		while ((len = is.read(data, offset, data.length - offset)) >= 0) {
++			offset += len;
++
++			if (offset == data.length) {
++				int next = is.read();
++				if (next < 0) break;
++
++				data = Arrays.copyOf(data, data.length * 2);
++				data[offset++] = (byte) next;
++			}
++		}
++
++		return new String(data, 0, offset, StandardCharsets.UTF_8);
++	}
++
++	public static void writeToFile(Path path, String string) throws IOException {
++		Files.write(path, string.getBytes(StandardCharsets.UTF_8));
++	}
++
++	public static void downloadFile(URL url, Path path) throws IOException {
++		try (InputStream in = openUrl(url)) {
++			Files.createDirectories(path.getParent());
++			Files.copy(in, path, StandardCopyOption.REPLACE_EXISTING);
++		} catch (Throwable t) {
++			try {
++				Files.deleteIfExists(path);
++			} catch (Throwable t2) {
++				t.addSuppressed(t2);
++			}
++
++			throw t;
++		}
++	}
++
++	private static final int HTTP_TIMEOUT_MS = 8000;
++
++	private static InputStream openUrl(URL url) throws IOException {
++		HttpURLConnection conn = (HttpURLConnection) url.openConnection();
++
++		conn.setConnectTimeout(HTTP_TIMEOUT_MS);
++		conn.setReadTimeout(HTTP_TIMEOUT_MS);
++		conn.connect();
++
++		int responseCode = conn.getResponseCode();
++		if (responseCode < 200 || responseCode >= 300) throw new IOException("HTTP request to "+url+" failed: "+responseCode);
++
++		return conn.getInputStream();
++	}
++
++	public static String getProfileIcon() {
++		try (InputStream is = Utils.class.getClassLoader().getResourceAsStream("profile_icon.png")) {
++			byte[] ret = new byte[4096];
++			int offset = 0;
++			int len;
++
++			while ((len = is.read(ret, offset, ret.length - offset)) != -1) {
++				offset += len;
++				if (offset == ret.length) ret = Arrays.copyOf(ret, ret.length * 2);
++			}
++
++			return "data:image/png;base64," + Base64.getEncoder().encodeToString(Arrays.copyOf(ret, offset));
++		} catch (IOException e) {
++			e.printStackTrace();
++		}
++
++		return "TNT"; // Fallback to TNT icon if we cant load Fabric icon.
++	}
++
++	public static String sha1String(Path path) throws IOException {
++		return bytesToHex(sha1(path));
++	}
++
++	public static byte[] sha1(Path path) throws IOException {
++		MessageDigest digest = sha1Digest();
++
++		try (InputStream is = Files.newInputStream(path)) {
++			byte[] buffer = new byte[64 * 1024];
++			int len;
++
++			while ((len = is.read(buffer)) >= 0) {
++				digest.update(buffer, 0, len);
++			}
++		}
++
++		return digest.digest();
++	}
++
++	private static MessageDigest sha1Digest() {
++		try {
++			return MessageDigest.getInstance("SHA-1");
++		} catch (NoSuchAlgorithmException e) {
++			throw new RuntimeException("Something has gone really wrong", e);
++		}
++	}
++
++	public static String bytesToHex(byte[] bytes) {
++		StringBuilder output = new StringBuilder();
++
++		for (byte b : bytes) {
++			output.append(String.format(Locale.ENGLISH, "%02x", b));
++		}
++
++		return output.toString();
++	}
++
++	/**
++	 * Simple semver-like version comparison.
++	 *
++	 * @return <0,0,>0 if versionA is less/same/greater than versionB
++	 */
++	public static int compareVersions(String versionA, String versionB) {
++		Pattern pattern = Pattern.compile("(\\d+(?:\\.\\d+)*)(?:-([^+]+))?(?:\\+.*)?");
++		Matcher matcherA = pattern.matcher(versionA);
++		Matcher matcherB = pattern.matcher(versionB);
++		if (!matcherA.matches() || !matcherB.matches()) return versionA.compareTo(versionB);
++
++		int cmp = compareVersionGroups(matcherA.group(1), matcherB.group(1)); // compare version core
++		if (cmp != 0) return cmp;
++
++		boolean aHasPreRelease = matcherA.group(2) != null;
++		boolean bHasPreRelease = matcherB.group(2) != null;
++
++		if (aHasPreRelease != bHasPreRelease) { // compare pre-release presence
++			return aHasPreRelease ? -1 : 1;
++		}
++
++		if (aHasPreRelease) {
++			cmp = compareVersionGroups(matcherA.group(2), matcherB.group(2)); // compare pre-release
++			if (cmp != 0) return cmp;
++		}
++
++		return 0;
++	}
++
++	private static int compareVersionGroups(String groupA, String groupB) {
++		String[] partsA = groupA.split("\\.");
++		String[] partsB = groupB.split("\\.");
++
++		for (int i = 0; i < Math.min(partsA.length, partsB.length); i++) {
++			String partA = partsA[i];
++			String partB = partsB[i];
++
++			try {
++				int a = Integer.parseInt(partA);
++
++				try {
++					int b = Integer.parseInt(partB);
++					int cmp = Integer.compare(a, b); // both numeric, compare int value
++					if (cmp != 0) return cmp;
++				} catch (NumberFormatException e) {
++					return -1; // only a numeric
++				}
++			} catch (NumberFormatException e) {
++				try {
++					Integer.parseInt(partB);
++					return 1; // only b numeric
++				} catch (NumberFormatException e2) {
++					// ignore
++				}
++			}
++
++			int cmp = partA.compareTo(partB); // neither numeric, compare lexicographically
++			if (cmp != 0) return cmp;
++		}
++
++		return Integer.compare(partsA.length, partsB.length); // compare part count
++	}
++}
+diff --git a/java17/src/main/resources/install.properties b/java17/src/main/resources/install.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..314d71fbeef25bfcea4e6af7963d3f103983f1c9
+--- /dev/null
++++ b/java17/src/main/resources/install.properties
+@@ -0,0 +1,2 @@
++fabric-loader-version=0.14.10
++game-version=1.19.2
+diff --git a/java17/src/main/resources/lang/installer.properties b/java17/src/main/resources/lang/installer.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..bdc7b327c1235cc8aefc3d0740246a66f312c9c8
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer.properties
+@@ -0,0 +1,44 @@
++installer.title=Fabric Installer
++option.create.profile=Create profile
++option.show.snapshots=Show snapshots
++progress.done=Done
++progress.done.start.server=Done, start server by running {0}
++progress.done.server=Server successfully installed
++progress.download.libraries=Downloading required files
++progress.download.minecraft=Downloading Minecraft server
++progress.download.library.entry=Downloading library {0}
++progress.exception.no.launcher.directory=No launcher directory found!
++progress.exception.no.launcher.profile=No launcher profile.json found!
++progress.generating.launch.jar=Generating server launch JAR
++progress.generating.launch.jar.library=Generating server launch JAR: {0}
++progress.installing=Installing Fabric Loader {0} on the client
++progress.installing.server=Installing Fabric Loader {0} on the server
++prompt.exception=Exception
++prompt.exception.caused.by=Caused by
++prompt.exception.occurrence=Exception occurred!
++prompt.exception.suppressed=Suppressed
++prompt.install=Install
++prompt.loader.version=Loader Version:
++prompt.loading.versions=Loading versions
++prompt.launcher.open.body=Please close the Minecraft launcher before installation to ensure correct operation.\n\nWould you like to continue anyway?
++prompt.launcher.open.tile=Minecraft launcher is open
++prompt.launcher.type.body=Fabric has detected 2 different installations of the Minecraft Launcher, which launcher do you wish to install Fabric to?\n\n- Select Microsoft Store if you are playing Minecraft through the Xbox App or the Windows Store.\n- Select Standalone if you downloaded the Minecraft launcher directly from the Minecraft.net website.\n\nIf you are unsure try the Microsoft Store option first, you can always re-run the installer.
++prompt.launcher.type.xbox=Microsoft Store / Xbox
++prompt.launcher.type.win32=Standalone (Win32)
++prompt.game.version=Minecraft Version:
++prompt.ready.install=Ready to install
++prompt.select.location=Select Install Location:
++prompt.server.info.jar=The official Minecraft server jar is required to run fabric
++prompt.server.info.command=Use this command to start the server
++prompt.server.info.scipt=Or generate launch scripts
++prompt.server.jar=Download server jar
++prompt.server.jar.valid=Valid {0} server jar found
++prompt.server.jar.invalid=No valid {0} server jar found
++prompt.server.downloading=Downloading {0}/{1} MB
++prompt.server.generate=Generate
++prompt.server.overwrite=Are you sure you want to override the existing launch scripts?
++prompt.server.launcher=Click here to use the standalone server launcher for an easier setup
++prompt.install.successful.title=Successfully Installed
++prompt.install.successful=Fabric Loader {0} for {1} has been successfully installed.<br>Many mods also require you to put <a href="{2}">Fabric API</a> into the mods folder.
++tab.client=Client
++tab.server=Server
+diff --git a/java17/src/main/resources/lang/installer_ar_AR.properties b/java17/src/main/resources/lang/installer_ar_AR.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d79c0b5d26a9209cbc98ab2f4c33b7047cdc5db
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_ar_AR.properties
+@@ -0,0 +1,38 @@
++installer.title=محمل فابريك
++option.create.profile=إنشاء بروفايل
++option.show.snapshots=إظهار النسخ التجريبية
++progress.done=تم
++progress.done.start.server=تم. قم ببدأ الخادم بتشغيل {0}
++progress.done.server=تم تثبيث الخادم بنجاح
++progress.download.libraries=تحميل الملفات الضرورية
++progress.download.minecraft=تحميل خادم (سيرفر) ماينكرافت
++progress.download.library.entry=تحميل library {0}
++progress.exception.no.launcher.directory=!لم يتم العثور على مجلد اللونشر
++progress.generating.launch.jar=إنشاء ملف الخادم
++progress.generating.launch.jar.library=إنشاء ملف الخادم: {0}
++progress.installing=تثبيت اللودر  {0}  على العميل
++progress.installing.server=تثبيت اللودر  {0}  على الخادم
++prompt.exception=Exception
++prompt.exception.caused.by=Caused by
++prompt.exception.occurrence=Exception occurred!
++prompt.exception.suppressed=Suppressed
++prompt.install=تثبيث
++prompt.loader.version=:نسخة المحمل
++prompt.loading.versions=جاري تحميل النسخ
++prompt.launcher.open.body=ماينكرافت لونشر يستعمل حاليا يرجى الخروج منه\n\n هل تريد الإستمرار على أي حال؟
++prompt.launcher.open.tile=ماينكرافت لونشر يستعمل حاليا
++prompt.game.version=:نسخة اللعبة
++prompt.ready.install=جاهز للتثبيث
++prompt.select.location=:حدد مكان التثبيث
++prompt.server.info.jar=الملف الرسمي للخادم الرسمي إجباري
++prompt.server.info.command=إستعمل هذه التعليمة لتشغيل الخادم
++prompt.server.info.scipt=أو انتج سكريبت التشغيل
++prompt.server.jar=تحميل ملف الخادم
++prompt.server.jar.valid=تم العثور على ملف الخادم صالح {0}
++prompt.server.jar.invalid={0} لم يتم العثور على ملف الخادم صالح 
++prompt.server.generate=إنشاء
++prompt.server.overwrite=هل أنت متأكد من أنك تريد تجاهل سكريبت التشغيل الحالية؟
++prompt.install.successful.title=تم التثبيث بنجاح
++prompt.install.successful=محمل فابريك {0} ل {1} تم تثبيثه بنجاح<br>الكثير من المودات تجبر وضع <a href="{2}">Fabric API</a> في مجلد المودات.
++tab.client=العميل
++tab.server=الخادم
+diff --git a/java17/src/main/resources/lang/installer_es_ES.properties b/java17/src/main/resources/lang/installer_es_ES.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..da1dca80603ff3bef703b5a942cb6cad3c5c7f5d
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_es_ES.properties
+@@ -0,0 +1,38 @@
++installer.title=Instalador de Fabric
++option.create.profile=Crear perfil
++option.show.snapshots=Mostrar snapshots
++progress.done=Hecho
++progress.done.start.server=Hecho, inicia el servidor ejecutando {0}
++progress.done.server=Servidor instalado correctamente
++progress.download.libraries=Descargando archivos necesarios
++progress.download.minecraft=Descargando el servidor de Minecraft
++progress.download.library.entry=Descargando librería {0}
++progress.exception.no.launcher.directory=¡No se encontró ningún directorio del lanzador!
++progress.generating.launch.jar=Generando JAR de lanzamiento del servidor
++progress.generating.launch.jar.library=Generando JAR de lanzamiento del servidor: {0}
++progress.installing=Instalando Fabric Loader {0} en el cliente
++progress.installing.server=Instalando Fabric Loader {0} en el servidor
++prompt.exception=Error
++prompt.exception.caused.by=Causado por
++prompt.exception.occurrence=¡Ocurrió un error!
++prompt.exception.suppressed=Suprimido
++prompt.install=Instalar
++prompt.loader.version=Versión de Loader:
++prompt.loading.versions=Cargando versiones
++prompt.launcher.open.body=Por favor, cierra el lanzador de Minecraft antes de la instalación para asegurar un funcionamiento correcto.\n\n¿Quieres continuar igualmente?
++prompt.launcher.open.tile=El lanzador de Minecraft está abierto
++prompt.game.version=Versión de Minecraft:
++prompt.ready.install=Listo para instalar
++prompt.select.location=Elige carpeta de instalación:
++prompt.server.info.jar=El JAR del servidor de Minecraft oficial es necesario para ejecutar Fabric
++prompt.server.info.command=Usa este comando para iniciar el servidor
++prompt.server.info.scipt=O genera scripts de lanzamiento
++prompt.server.jar=Descargar JAR del servidor
++prompt.server.jar.valid=JAR del servidor de la {0} válido encontrado
++prompt.server.jar.invalid=No se encontró un JAR del servidor de la {0} válido
++prompt.server.generate=Generar
++prompt.server.overwrite=¿Estás seguro que quieres sobreescribir los scripts de lanzamiento existentes?
++prompt.install.successful.title=Instalado Correctamente
++prompt.install.successful=Fabric Loader {0} para {1} ha sido instalado correctamente.<br>Muchos mods también necesitan que descargues <a href="{2}">Fabric API</a> en tu carpeta de mods.
++tab.client=Cliente
++tab.server=Servidor
+diff --git a/java17/src/main/resources/lang/installer_et_EE.properties b/java17/src/main/resources/lang/installer_et_EE.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..af2e255f2cbae83747047807e1571cedec2b87f5
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_et_EE.properties
+@@ -0,0 +1,44 @@
++installer.title=Fabric Installer
++option.create.profile=Loo profiil
++option.show.snapshots=Kuva katsetusversioone
++progress.done=Valmis
++progress.done.start.server=Valmis - käivita server, kasutades {0}
++progress.done.server=Server edukalt paigaldatud
++progress.download.libraries=Nõutud failide allalaadimine
++progress.download.minecraft=Minecrafti serveri allalaadimine
++progress.download.library.entry=Teegi {0} allalaadimine
++progress.exception.no.launcher.directory=Launcheri kausta ei leitud!
++progress.exception.no.launcher.profile=Launcheri profile.json faili ei leitud!
++progress.generating.launch.jar=Serveri käivitus-JARi genereerimine
++progress.generating.launch.jar.library=Serveri käivitus-JARi genereerimine: {0}
++progress.installing=Kliendile Fabric Loader {0} paigaldamine
++progress.installing.server=Serverisse Fabric Loader {0} paigaldamine
++prompt.exception=Tõrge
++prompt.exception.caused.by=Põhjustas
++prompt.exception.occurrence=Esines tõrge!
++prompt.exception.suppressed=Ignoreeritud
++prompt.install=Paigalda
++prompt.loader.version=Loaderi versioon:
++prompt.loading.versions=Versioonide laadimine
++prompt.launcher.open.body=Eduka paigalduse saavutamiseks palun sulge enne paigaldamist Minecraft Launcher.\n\nKas soovid siiski jätkata?
++prompt.launcher.open.tile=Minecraft Launcher on avatud
++prompt.launcher.type.body=Fabric on tuvastanud 2 erinevat Minecraft Launcheri paigaldust, kummale Launcherile soovid Fabricu paigaldada?\n\n- Vali Microsoft Store, kui mängid Minecrafti läbi Xboxi rakenduse või Windows Store'i.\n- Vali eraldiseisev, kui paigaldasid Minecraft Launcheri otse Minecraft.net veebilehelt.\n\nKui sa pole kindel, proovi kõigepealt Microsoft Store'i valikut, vajadusel saad alati uuesti paigaldada.
++prompt.launcher.type.xbox=Microsoft Store / Xbox
++prompt.launcher.type.win32=Eraldiseisev (Win32)
++prompt.game.version=Minecrafti versioon:
++prompt.ready.install=Paigaldamiseks valmis
++prompt.select.location=Vali paigaldamise asukoht:
++prompt.server.info.jar=Fabricu käivitamiseks on vajalik ametlik Minecrafti serveri JAR
++prompt.server.info.command=Kasuta serveri käivitamiseks seda käsklust
++prompt.server.info.scipt=Või genereeri käivitusskriptid
++prompt.server.jar=Laadi serveri JAR alla
++prompt.server.jar.valid=Leitud {0} serveri JAR
++prompt.server.jar.invalid=Sobivat {0} serveri JARi ei leitud
++prompt.server.downloading=Allalaadimine {0}/{1} MB
++prompt.server.generate=Genereeri
++prompt.server.overwrite=Kas soovid kindlasti olemasolevad käivitusskriptid üle kirjutada?
++prompt.server.launcher=Klõpsa siia, et kasutada lihtsamaks seadistuseks eraldiseisvat serverikäivitajat
++prompt.install.successful.title=Edukalt paigaldatud
++prompt.install.successful=Fabric Loader {0} versioonile {1} on edukalt paigaldatud.<br>Mitmed modid eeldavad ka <a href="{2}">Fabric API</a> asetamist mods kausta.
++tab.client=Klient
++tab.server=Server
+diff --git a/java17/src/main/resources/lang/installer_fi_FI.properties b/java17/src/main/resources/lang/installer_fi_FI.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..e2d665323fd7b2fea7675b4d7e928177367f46b8
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_fi_FI.properties
+@@ -0,0 +1,39 @@
++installer.title=Fabric-asennusohjelma
++option.create.profile=Luo profiili
++option.show.snapshots=Näytä snapshotit
++progress.done=Valmis
++progress.done.start.server=Valmista tuli, käynnistä palvelin suorittamalla {0}
++progress.done.server=Palvelimen asennus onnistui
++progress.download.libraries=Ladataan vaadittuja tiedostoja
++progress.download.minecraft=Ladataan Minecraft-palvelinta
++progress.download.library.entry=Ladataan kirjastoa {0}
++progress.exception.no.launcher.directory=Käynnistinkansiota ei löytynyt!
++progress.generating.launch.jar=Luodaan palvelimen käynnistin-JARia
++progress.generating.launch.jar.library=Luodaan palvelimen käynnistin-JARia: {0}
++progress.installing=Asennetaan Fabric Loader {0} asiakasohjelmalle
++progress.installing.server=Asennetaan Fabric Loader {0} palvelimelle
++prompt.exception=Virhe
++prompt.exception.caused.by=Aiheutti
++prompt.exception.occurrence=Tapahtui virhe!
++prompt.exception.suppressed=Sivuutettu
++prompt.install=Asenna
++prompt.loader.version=Loader-versio:
++prompt.loading.versions=Ladataan versioita
++prompt.launcher.open.body=Sulje Minecraft-käynnistin ennen asentamista, jotta se varmasti onnistuu.\n\nHaluaisitko jatkaa joka tapauksessa?
++prompt.launcher.open.tile=Minecraft-käynnistin on auki
++prompt.game.version=Minecraft-versio:
++prompt.ready.install=Valmiina asentamaan
++prompt.select.location=Valitse asennussijainti:
++prompt.server.info.jar=Fabricin suorittamiseen vaaditaan virallinen Minecraft-palvelin-JAR
++prompt.server.info.command=Käytä tätä komentoa palvelimen suorittamiseen
++prompt.server.info.scipt=Tai generoi käynnistinskriptit
++prompt.server.jar=Lataa palvelin-JAR
++prompt.server.jar.valid=Sopiva {0}-palvelin-JAR löytyi
++prompt.server.jar.invalid=Sopivaa {0}-palvelin-JARia ei löytynyt
++prompt.server.downloading=Ladataan {0}/{1} Mt
++prompt.server.generate=Generoi
++prompt.server.overwrite=Haluatko varmasti korvata olemassaolevat käynnistinskriptit?
++prompt.install.successful.title=Asennus onnistui
++prompt.install.successful=Fabric Loader {0} versiolle {1} asennettiin onnistuneesti.<br>Monet modit vaativat myös <a href="{2}">Fabric API:n</a> lataamisen mods-kansioon.
++tab.client=Asiakasohjelma
++tab.server=Palvelin
+diff --git a/java17/src/main/resources/lang/installer_fr_FR.properties b/java17/src/main/resources/lang/installer_fr_FR.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c5eb4d0c8d82ad9fa3f48b4ecc0408b07ecacef
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_fr_FR.properties
+@@ -0,0 +1,36 @@
++installer.title=Installateur Fabric
++option.create.profile=Créer un profil
++option.show.snapshots=Afficher les snapshots
++progress.done=Terminé
++progress.done.start.server=Terminé, démarrez le serveur en exécutant {0}
++progress.done.server=Serveur installé avec succès
++progress.download.libraries=Téléchargement des fichiers requis
++progress.download.minecraft=Téléchargement du serveur Minecraft
++progress.download.library.entry=Téléchargement de la bibliothèque {0}
++progress.exception.no.launcher.directory=Le répertoire du launcher n'a pas été trouvé !
++progress.generating.launch.jar=Génération du fichier JAR de lancement du serveur
++progress.generating.launch.jar.library=Génération du fichier JAR de lancement du serveur : {0}
++progress.installing=Installation de Fabric Loader {0} sur le client
++progress.installing.server=Installation de Fabric Loader {0} sur le serveur
++prompt.exception=Exception
++prompt.exception.caused.by=Provoquée par
++prompt.exception.occurrence=Exception survenue !
++prompt.exception.suppressed=Supprimée
++prompt.install=Installer
++prompt.loader.version=Version du Loader :
++prompt.loading.versions=Chargement des versions
++prompt.game.version=Version des mappings :
++prompt.ready.install=Prêt à installer
++prompt.select.location=Sélectionner l'emplacement d'installation :
++prompt.server.info.jar=Le fichier JAR officiel du serveur Minecraft est requis pour exécuter Fabric
++prompt.server.info.command=Utilisez cette commande pour démarrer le serveur
++prompt.server.info.scipt=Ou générer des scripts de lancement
++prompt.server.jar=Télécharger le fichier jar du serveur
++prompt.server.jar.valid=Jar serveur {0} valide trouvé
++prompt.server.jar.invalid=Aucun fichier jar serveur {0} valide trouvé
++prompt.server.generate=Générer
++prompt.server.overwrite=Voulez-vous vraiment remplacer les scripts de lancement existants?
++prompt.install.successful.title=Installé avec succès
++prompt.install.successful=Fabric Loader {0} pour la version {1} a été installé avec succès. <br> De nombreux mods vous demanderons également de placer <a href="{2}">Fabric API</a> dans le dossier mods.
++tab.client=Client
++tab.server=Serveur
+diff --git a/java17/src/main/resources/lang/installer_ja_JP.properties b/java17/src/main/resources/lang/installer_ja_JP.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..a8ff7a0530e8ef60f03275f495ad873e96dc7e7d
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_ja_JP.properties
+@@ -0,0 +1,42 @@
++installer.title=Fabric セットアッププログラム
++option.create.profile=起動構成を作成
++option.show.snapshots=スナップショット版を表示
++progress.done=完了
++progress.done.start.server=完了、{0} を実行してサーバーを起動します
++progress.done.server=サーバーのインストールが完了しました。
++progress.download.libraries=必要なファイルをダウンロードしています...
++progress.download.minecraft=Minecraft サーバーをダウンロードしています...
++progress.download.library.entry=ライブラリ {0} をダウンロードしています...
++progress.exception.no.launcher.directory=ランチャーディレクトリが見つかりません！
++progress.exception.no.launcher.profile=ランチャー profile.json が見つかりません！
++progress.generating.launch.jar=サーバーの起動に必要な JAR を生成しています...
++progress.generating.launch.jar.library=サーバーの起動に必要な JAR {0} を生成しています...
++progress.installing=クライアントに Fabric ローダー {0} をインストールしています...
++progress.installing.server=サーバーに Fabric ローダー {0} をインストールしています...
++prompt.exception=例外
++prompt.exception.caused.by=原因：
++prompt.exception.occurrence=例外が発生しました！
++prompt.exception.suppressed=抑制された例外
++prompt.install=インストール
++prompt.loader.version=ローダーバージョン：
++prompt.loading.versions=バージョンを読み込み中...
++prompt.launcher.open.body=正しい動作のために、ランチャーをいったん終了してからインストールしてください。\n\nそれでも続けますか？
++prompt.launcher.open.tile=Minecraft ランチャーが実行中です
++prompt.launcher.type.body=二種類の Minecraft ランチャーが見つかりました。どちらにインストールしますか？\n\n- Xbox App や Windows Store 経由でプレイしている場合は、「Microsoft Store」を選択してください。\n- ランチャーを Minecraft.net ウェブサイトから直接ダウンロードした場合は「スタンドアローン」を選択してください。\n\nわからない場合は、まず「Microsoft Store」を選択してください。後でインストーラーは再度実行できます。
++prompt.launcher.type.xbox=Microsoft Store / Xbox
++prompt.launcher.type.win32=スタンドアローン (Win32)
++prompt.game.version=Minecraft バージョン：
++prompt.ready.install=インストールの準備が整いました。
++prompt.select.location=インストール先：
++prompt.server.info.jar=Fabric を実行するには、公式の Minecraft サーバーの JAR が必要です。
++prompt.server.info.command=次のコマンドを使用してサーバーを起動します：
++prompt.server.info.scipt=または起動スクリプトを生成します：
++prompt.server.jar=サーバー JAR をダウンロード
++prompt.server.jar.valid=有効な {0} サーバー JAR が見つかりました。
++prompt.server.jar.invalid=無効な {0} サーバー JAR が見つかりました。
++prompt.server.generate=生成
++prompt.server.overwrite=既存の起動スクリプトを上書きしてもよろしいですか？
++prompt.install.successful.title=正常にインストールされました
++prompt.install.successful={1}用のFabric ローダー {0} が正常にインストールされました。<br>多くのmodを使用する場合には、<a href="{2}">Fabric API</a> をmodsフォルダーに入れる必要があります。
++tab.client=クライアント
++tab.server=サーバー
+diff --git a/java17/src/main/resources/lang/installer_pl_PL.properties b/java17/src/main/resources/lang/installer_pl_PL.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..f48ae0fef0764d86c1beba7c3744a5c5edb827cc
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_pl_PL.properties
+@@ -0,0 +1,36 @@
++installer.title=Instalator Fabric
++option.create.profile=Stwórz profil
++option.show.snapshots=Pokazuj snapshoty
++progress.done=Gotowe
++progress.done.start.server=Gotowe, uruchom server otwierając {0}
++progress.done.server=Serwer pomyślnie zainstalowany
++progress.download.libraries=Pobieranie wymaganych plików
++progress.download.minecraft=Pobieranie serwera Minecrafta
++progress.download.library.entry=Pobieranie biblioteki {0}
++progress.exception.no.launcher.directory=Nie znaleziono ścieżki programu uruchamiającego!
++progress.generating.launch.jar=Generowanie pliku JAR do uruchomienia serwera
++progress.generating.launch.jar.library=Generowanie pliku JAR do uruchomienia serwera: {0}
++progress.installing=Instalowanie Loadera Fabric {0} na kliencie
++progress.installing.server=Instalowanie Loadera Fabric {0} na serwerze
++prompt.exception=Wyjątek
++prompt.exception.caused.by=Spowodowany
++prompt.exception.occurrence=Wystąpił wyjątek!
++prompt.exception.suppressed=Stłumiono
++prompt.install=Instaluj
++prompt.loader.version=Wersja Loadera:
++prompt.loading.versions=Ładowanie wersji
++prompt.game.version=Wersja Minecrafta:
++prompt.ready.install=Gotowe do instalacji
++prompt.select.location=Wybierz lokalizację instalacji:
++prompt.server.info.jar=Oficjalny plik jar serwera Minecrafta jest wymagany do uruchomienia Fabric
++prompt.server.info.command=Użyj tej komendy do uruchomienia serwera
++prompt.server.info.scipt=Lub wygeneruj skrypty uruchamiające
++prompt.server.jar=Pobierz plik jar servera
++prompt.server.jar.valid=Poprawny plik jar serwera {0} został znaleziony
++prompt.server.jar.invalid=Poprawny plik jar serwera {0} nie został znaleziony
++prompt.server.generate=Generuj
++prompt.server.overwrite=Czy na pewno chcesz nadpisać istniejące skrypty uruchamiające?
++prompt.install.successful.title=Pomyślnie zainstalowano
++prompt.install.successful=Loader Fabric {0} dla {1} został pomyślnie zainstalowany.<br>Wiele modów wymaga także umieszczenia <a href="{2}">Fabric API</a> w folderze modów.
++tab.client=Klient
++tab.server=Serwer
+\ No newline at end of file
+diff --git a/java17/src/main/resources/lang/installer_pt_BR.properties b/java17/src/main/resources/lang/installer_pt_BR.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..057630f33fd6f2a92651f8fa291484ba2f669968
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_pt_BR.properties
+@@ -0,0 +1,43 @@
++installer.title=Instalador do Fabric
++option.create.profile=Criar perfil
++option.show.snapshots=Listar snapshots
++progress.done=Concluído
++progress.done.start.server=Concluído, inicie o servidor com {0}
++progress.done.server=Servidor instalado
++progress.download.libraries=Baixando arquivos necessários
++progress.download.minecraft=Baixando servidor de Minecraft
++progress.download.library.entry=Baixando biblioteca {0}
++progress.exception.no.launcher.directory=Nenhum diretório do launcher encontrado!
++progress.exception.no.launcher.profile=Nenhum profile.json encontrado!
++progress.generating.launch.jar=Gerando JAR de inicialização do servidor
++progress.generating.launch.jar.library=Gerando JAR de inicialização do servidor: {0}
++progress.installing=Instalando Fabric Loader {0} no cliente
++progress.installing.server=Instalando Fabric Loader {0} no servidor
++prompt.exception=Exceção
++prompt.exception.caused.by=Causada por
++prompt.exception.occurrence=Houve uma exceção!
++prompt.exception.suppressed=Cancelada
++prompt.install=Instalar
++prompt.loader.version=Versão do loader:
++prompt.loading.versions=Carregando versões
++prompt.launcher.open.body=Feche o Launcher do Minecraft para uma instalação sem problemas.\n\nDeseja continuar mesmo assim?
++prompt.launcher.open.tile=O Launcher do Minecraft está aberto
++prompt.launcher.type.body=O Fabric detectou 2 instalações diferentes do Launcher do Minecraft. Em qual launcher você deseja instalar o Fabric?\n\n- Selecione "Microsoft Store" se deseja jogar o Minecraft através do aplicativo Xbox ou Microsoft Store.\n- Selecione "Padrão" se você baixou o Launcher do Minecraft diretamente do site oficial minecraft.net.\n\nEm caso de dúvida, tente a opção da Microsoft Store primeiro. Você pode executar o instalador novamente mais tarde.
++prompt.launcher.type.xbox=Microsoft Store / Xbox
++prompt.launcher.type.win32=Padrão (Win32)
++prompt.game.version=Versão do Minecraft:
++prompt.ready.install=Pronto para instalação
++prompt.select.location=Local de instalação:
++prompt.server.info.jar=O JAR oficial para servidor de Minecraft é necessário para executar o Fabric
++prompt.server.info.command=Use esse comando para iniciar o servidor
++prompt.server.info.scipt=Ou gerar scripts de inicialização
++prompt.server.jar=Baixe o JAR para servidor
++prompt.server.jar.valid=JAR {0} válido para servidor encontrado
++prompt.server.jar.invalid=Nenhum JAR {0} válido para servidor encontrado
++prompt.server.downloading=Baixando {0}/{1} MB
++prompt.server.generate=Gerar
++prompt.server.overwrite=Deseja mesmo sobrescrever os scripts de inicialização atuais?
++prompt.install.successful.title=Instalação com êxito
++prompt.install.successful=O Fabric Loader {0} para {1} foi instalado com êxito.<br>Muitos mods exigem o <a href="{2}">Fabric API</a> na pasta de mods.
++tab.client=Cliente
++tab.server=Servidor
+diff --git a/java17/src/main/resources/lang/installer_ru_RU.properties b/java17/src/main/resources/lang/installer_ru_RU.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..0301cf4bd3a7dbc550fc6eabef08a4752ac37f66
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_ru_RU.properties
+@@ -0,0 +1,36 @@
++installer.title=Установщик Fabric
++option.create.profile=Создать профиль
++option.show.snapshots=Показать снапшоты
++progress.done=Готово
++progress.done.start.server=Готово, запустите сервер с помощью {0}
++progress.done.server=Сервер успешно установлен
++progress.download.libraries=Скачивание необходимых файлов
++progress.download.minecraft=Скачивание сервера Minecraft
++progress.download.library.entry=Скачивание библиотеки {0}
++progress.exception.no.launcher.directory=Каталог лаунчера не найден!
++progress.generating.launch.jar=Создание JAR запуска сервера
++progress.generating.launch.jar.library=Создание JAR запуска сервера: {0}
++progress.installing=Установка загрузчика Fabric {0} для клиента
++progress.installing.server=Установка загрузчика Fabric {0} для сервера
++prompt.exception=Исключение
++prompt.exception.caused.by=Вызвано
++prompt.exception.occurrence=Произошло исключение!
++prompt.exception.suppressed=Подавлен
++prompt.install=Установить
++prompt.loader.version=Версия загрузчика:
++prompt.loading.versions=Загрузка версий
++prompt.game.version=Версия Minecraft:
++prompt.ready.install=Готов к установке
++prompt.select.location=Выберите место установки:
++prompt.server.info.jar=Официальный jar сервера Minecraft требуется для запуска Fabric
++prompt.server.info.command=Используйте эту команду для запуска сервера
++prompt.server.info.scipt=Или сгенерируйте скрипт запуска
++prompt.server.jar=Скачать jar сервера
++prompt.server.jar.valid=Действительный {0} jar сервера найден
++prompt.server.jar.invalid=Действительный {0} jar сервера не найден
++prompt.server.generate=Сгенерировать
++prompt.server.overwrite=Вы уверены, что хотите переопределить существующий скрипт запуска?
++prompt.install.successful.title=Успешно установлено
++prompt.install.successful=Загрузчик Fabric {0} для {1} был успешно установлен.<br>Многие моды также требуют, чтобы вы положили <a href="{2}">Fabric API</a> в папку модов.
++tab.client=Клиент
++tab.server=Сервер
+diff --git a/java17/src/main/resources/lang/installer_zh_CN.properties b/java17/src/main/resources/lang/installer_zh_CN.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..5f4cc8c65251f623f9d66e56ef142f91116506a0
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_zh_CN.properties
+@@ -0,0 +1,36 @@
++installer.title=Fabric 安装器
++option.create.profile=创建新的启动器配置
++option.show.snapshots=显示快照版本
++progress.done=安装完成
++progress.done.start.server=安装完成，请运行 {0} 以启动服务端
++progress.done.server=服务端成功安装
++progress.download.libraries=正在下载必需文件……
++progress.download.minecraft=正在下载服务端……
++progress.download.library.entry=正在下载 {0} 库
++progress.exception.no.launcher.directory=找不到启动器目录！
++progress.generating.launch.jar=生成服务端
++progress.generating.launch.jar.library=正在生成服务端：{0}
++progress.installing=正在客户端上安装 Fabric 加载器 {0}
++progress.installing.server=正在服务端上安装 Fabric 加载器 {0}
++prompt.exception=错误
++prompt.exception.caused.by=起因：
++prompt.exception.occurrence=遇到错误！
++prompt.exception.suppressed=被屏蔽的错误：
++prompt.install=安装
++prompt.loader.version=加载器版本：
++prompt.loading.versions=正在加载可安装版本……
++prompt.game.version=游戏版本：
++prompt.ready.install=已准备完毕，可以安装
++prompt.select.location=选择安装位置
++prompt.server.info.jar=需要官方服务端才能运行Fabric
++prompt.server.info.command=使用此命令启动服务端
++prompt.server.info.scipt=或生成启动脚本
++prompt.server.jar=下载服务端
++prompt.server.jar.valid=找到有效的 {0} 服务端
++prompt.server.jar.invalid=找不到有效的 {0} 服务端
++prompt.server.generate=生成
++prompt.server.overwrite=您确定要覆盖现有的启动脚本吗？
++prompt.install.successful.title=安装成功
++prompt.install.successful={1}的Fabric加载器{0}已成功安装。<br>许多MOD还要求您将<a href="{2}">Fabric API</a>放入mods文件夹。
++tab.client=客户端
++tab.server=服务端
+diff --git a/java17/src/main/resources/lang/installer_zh_TW.properties b/java17/src/main/resources/lang/installer_zh_TW.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..71543f34b237ff4c7cfe6877b519d22b6c999cd0
+--- /dev/null
++++ b/java17/src/main/resources/lang/installer_zh_TW.properties
+@@ -0,0 +1,36 @@
++# Translator: pan93412 <pan93412@gmail.com>, 2019.
++# Former Translator: shedaniel, 2019.
++installer.title=Fabric 安裝程式
++option.create.profile=建立設定檔
++option.show.snapshots=顯示快照
++progress.done=完成
++progress.done.start.server=完成，請透過執行 {0} 來開啟伺服器
++progress.done.server=伺服器安裝成功
++progress.download.libraries=正在下載必要檔案…
++progress.download.minecraft=正在下載 Minecraft 伺服器
++progress.download.library.entry=正在下載 {0} 函式庫
++progress.exception.no.launcher.directory=未找到啟動器目錄！
++progress.generating.launch.jar=正在產生伺服器啟動 JAR
++progress.generating.launch.jar.library=正在產生伺服器啟動 JAR：{0}
++progress.installing=正在客戶端安裝 {0} Fabric 啟動器
++progress.installing.server=正在伺服器安裝 {0} Fabric 啟動器
++prompt.exception=例外錯誤
++prompt.exception.caused.by=發生原因：
++prompt.exception.occurrence=遇到例外錯誤！
++prompt.exception.suppressed=已隱藏
++prompt.install=安裝
++prompt.loader.version=載入程式版本：
++prompt.loading.versions=正在載入版本
++prompt.game.version=Minecraft 版本：
++prompt.ready.install=安裝準備就緒
++prompt.select.location=選擇安裝位置
++prompt.server.info.jar=執行 Fabric 需要官方的 Minecraft 伺服器 jar
++prompt.server.info.command=使用這個指令來啟動伺服器
++prompt.server.info.scipt=或產生啟動文稿
++prompt.server.jar=下載伺服器 jar
++prompt.server.jar.valid=已找到有效的 {0} 伺服器 jar
++prompt.server.jar.invalid=未找到有效的 {0} 伺服器 jar
++prompt.server.generate=產生
++prompt.server.overwrite=確定覆蓋現存啟動文稿？
++tab.client=客戶端
++tab.server=伺服器

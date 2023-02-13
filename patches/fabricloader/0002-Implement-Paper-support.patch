@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Denery <dorofeevij@gmail.com>
+Date: Mon, 13 Feb 2023 18:23:18 +0300
+Subject: [PATCH] Implement Paper support
+
+
+diff --git a/build.gradle b/build.gradle
+index 01a9ec66c39162b0050118faf744f153f0cb2254..5e0de6eaba8c2f7ea7d9e10e560c2499a95f27ad 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -69,6 +69,9 @@ dependencies {
+ 	api "org.ow2.asm:asm-commons:${project.asm_version}"
+ 	api "org.ow2.asm:asm-tree:${project.asm_version}"
+ 	api "org.ow2.asm:asm-util:${project.asm_version}"
++	api("org.sharegov:mjson:1.4.1") {
++		transitive = false
++	}
+ 
+ 	api("net.fabricmc:sponge-mixin:${project.mixin_version}") {
+ 		exclude module: 'launchwrapper'
+diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
+index c15c7695253e4306c9058a708392df1980308b6e..05547f663a0aef7c5ac9d08719a62ebf20f5d6be 100644
+--- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
++++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
+@@ -21,7 +21,7 @@ import net.fabricmc.loader.impl.game.LibClassifier.LibraryType;
+ 
+ enum McLibrary implements LibraryType {
+ 	MC_CLIENT(EnvType.CLIENT, "net/minecraft/client/main/Main.class", "net/minecraft/client/MinecraftApplet.class", "com/mojang/minecraft/MinecraftApplet.class"),
+-	MC_SERVER(EnvType.SERVER, "net/minecraft/server/Main.class", "net/minecraft/server/MinecraftServer.class", "com/mojang/minecraft/server/MinecraftServer.class"),
++	MC_SERVER(EnvType.SERVER, System.getProperty("toki.main"), "net/minecraft/server/Main.class", "net/minecraft/server/MinecraftServer.class", "com/mojang/minecraft/server/MinecraftServer.class"), // Toki - add craftbukkit entrypoint
+ 	MC_COMMON("net/minecraft/server/MinecraftServer.class"),
+ 	MC_BUNDLER(EnvType.SERVER, "net/minecraft/bundler/Main.class"),
+ 	REALMS(EnvType.CLIENT, "realmsVersion", "com/mojang/realmsclient/RealmsVersion.class"),
+diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
+index d51321551437bead68505a3c4f45a9af1e0c55e4..e9ce37202cef6376561c397afdd3a48818477a19 100644
+--- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
++++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
+@@ -33,6 +33,8 @@ import java.util.Locale;
+ import java.util.Map;
+ import java.util.Set;
+ 
++import mjson.Json;
++
+ import net.fabricmc.api.EnvType;
+ import net.fabricmc.loader.api.ObjectShare;
+ import net.fabricmc.loader.api.VersionParsingException;
+@@ -438,6 +440,12 @@ public class MinecraftGameProvider implements GameProvider {
+ 		for (Path lib : miscGameLibraries) {
+ 			launcher.addToClassPath(lib);
+ 		}
++		// Toki start - additional Paper libraries
++		Json.read(System.getProperty("toki.libraries")).asJsonList().stream().map(Json::asString).forEach(string -> {
++			final Path libPath = Paths.get(string);
++			launcher.addToClassPath(libPath);
++		});
++		// Toki end
+ 	}
+ 
+ 	@Override
+diff --git a/settings.gradle b/settings.gradle
+deleted file mode 100644
+index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..0000000000000000000000000000000000000000
+--- a/settings.gradle
++++ /dev/null
+@@ -1,18 +0,0 @@
+-pluginManagement {
+-	repositories {
+-		maven {
+-			url = "https://maven.fabricmc.net"
+-			name = "FabricMC"
+-		}
+-		gradlePluginPortal()
+-	}
+-}
+-rootProject.name='fabric-loader'
+-
+-include "minecraft"
+-
+-if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+-	include "minecraft:minecraft-test"
+-} else {
+-	println("Minecraft test sub project requires java 17 or higher!")
+-}
+\ No newline at end of file
+diff --git a/src/main/resources/fabric-installer.json b/src/main/resources/fabric-installer.json
+index 01d3601816b0d65ab4eec3f936de22b2868f0a0a..e0ff157c9af93575c81fa8ddee3379771593d1d2 100644
+--- a/src/main/resources/fabric-installer.json
++++ b/src/main/resources/fabric-installer.json
+@@ -39,6 +39,10 @@
+       {
+         "name": "org.ow2.asm:asm-util:9.4",
+         "url": "https://maven.fabricmc.net/"
++      },
++      {
++        "name": "org.sharegov:mjson:1.4.1",
++        "url": "https://repo.maven.apache.org/maven2/"
+       }
+     ],
+     "server": [

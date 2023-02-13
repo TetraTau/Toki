@@ -6,7 +6,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = "papyrus"
+rootProject.name = "toki"
 
 include(
     "paper-api",

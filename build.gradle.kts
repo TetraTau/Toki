@@ -11,8 +11,6 @@ plugins {
     id("io.papermc.paperweight.patcher") version "1.3.11"
 }
 
-//apply<net.tetratau.papyrus.PapyrusPlugin>()
-
 val paperMavenPublicUrl = "https://papermc.io/repo/repository/maven-public/"
 
 repositories {
@@ -26,7 +24,7 @@ repositories {
 dependencies { // Daily reminder to update remapper, decompiler and paperclip if needed.
     remapper("net.fabricmc:tiny-remapper:0.8.2:fat")
     decompiler("net.minecraftforge:forgeflower:1.5.605.7")
-    paperclip("io.papermc:paperclip:3.0.2")
+    paperclip(project(":paperclip")) // "io.papermc:paperclip:3.0.2"
 }
 
 allprojects {
@@ -58,8 +56,6 @@ subprojects {
         maven("https://papermc.io/repo/repository/maven-public/")
     }
 }
-
-val fabricLoaderRefCommit = providers.gradleProperty("fabricloaderRef").get()
 
 paperweight {
     serverProject.set(project(":paper-server"))
@@ -103,8 +99,8 @@ paperweight {
 
 tasks {
     generateDevelopmentBundle {
-        apiCoordinates.set("net.tetratau.papyrus:paper-api")
-        mojangApiCoordinates.set("net.tetratau.papyrus:mojang-api")
+        apiCoordinates.set("net.tetratau.toki:paper-api")
+        mojangApiCoordinates.set("net.tetratau.toki:mojang-api")
         libraryRepositories.set(
             listOf(
                 "https://repo.maven.apache.org/maven2/",
@@ -124,7 +120,7 @@ tasks {
         val applyPaperServerPatchTask = getByName<SimpleApplyGitPatches>("applyServerPatches")
 
         val checkOutRepoTask = register<CheckoutRepo>("clone$taskName") {
-            group = "papyrus"
+            group = "toki"
             repoName.set(patchDirName)
             url.set(github(orgName, projectName))
             ref.set(refCommit)
@@ -133,7 +129,7 @@ tasks {
 
         register<SimpleApplyGitPatches>("apply${taskName}Patches") {
             dependsOn(checkOutRepoTask)
-            group = "papyrus"
+            group = "toki"
             bareDirectory.set(true) // Set this to true because without the git recreation it won't work for some reason.
             devImports.set(paperweight.devImports)
             upstreamBranch.set("master")
@@ -145,7 +141,7 @@ tasks {
         }
 
         register<SimpleRebuildGitPatches>("rebuild${taskName}Patches") {
-            group = "papyrus"
+            group = "toki"
             patchDir.set(projPatchDir)
             inputDir.set(projectDir)
 
@@ -153,50 +149,8 @@ tasks {
         }
     }
 
-    createPatchTasks("FabricMC", "fabric-loader", "fabricloader", "FabricLoader", "fabricloaderRef")
+    createPatchTasks("FabricMC", "fabric-loader", "fabricloader", "FabricLoader", "fabricloaderRef") // Do we need to patch fabric loader?
     createPatchTasks("PaperMC", "Paperclip", "paperclip", "Paperclip", "paperclipRef")
-
-    // FABRIC LOADER PATCH SYSTEM
-    /*
-    val fabricPatchDir = layout.projectDirectory.dir("patches/fabricloader")
-    val fabricProjectDir = layout.projectDirectory.dir("fabric-loader")
-    val fabricRefCommit = providers.gradleProperty("fabricloaderRef").get()
-
-    val applyPaperServerPatchTask = getByName<SimpleApplyGitPatches>("applyServerPatches")
-
-    val checkOutRepoTask = register<CheckoutRepo>("cloneFabricLoader") {
-        group = "papyrus"
-        repoName.set("fabricloader")
-        url.set(github("FabricMC", "fabric-loader"))
-        ref.set(fabricRefCommit)
-        workDir.set(layout.cacheDir(io.papermc.paperweight.util.constants.UPSTREAMS))
-    }
-
-    register<SimpleApplyGitPatches>("applyFabricLoaderPatches") {
-        dependsOn(checkOutRepoTask)
-        group = "papyrus"
-        bareDirectory.set(true) // Set this to true because without the git recreation it won't work for some reason.
-        devImports.set(paperweight.devImports)
-        upstreamBranch.set("master")
-        mcDevSources.set(paperweight.mcDevSourceDir)
-        sourceMcDevJar.set(applyPaperServerPatchTask.sourceMcDevJar)
-        upstreamDir.set(checkOutRepoTask.get().outputDir)
-        patchDir.set(fabricPatchDir)
-        outputDir.set(fabricProjectDir)
-    }
-
-    register<SimpleRebuildGitPatches>("rebuildFabricLoaderPatches") {
-        group = "papyrus"
-        patchDir.set(fabricPatchDir)
-        inputDir.set(fabricProjectDir)
-
-        baseRef.set(fabricRefCommit)
-    }
-
-     */
-
-    // PAPERCLIP PATCH SYSTEM
-
 
 }
 

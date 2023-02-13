@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Denery <dorofeevij@gmail.com>
+Date: Mon, 13 Feb 2023 18:15:13 +0300
+Subject: [PATCH] Buildscript changes
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 623556c20cddbe43042e11d983913835a7ebc45d..5696d6e64c2155faf3c17187ada0c843027b3b02 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -15,8 +15,8 @@ subprojects {
+ val mainClass = "io.papermc.paperclip.Main"
+ 
+ tasks.jar {
+-    val java6Jar = project(":java6").tasks.named("jar")
+-    val java17Jar = project(":java17").tasks.named("shadowJar")
++    val java6Jar = project(":paperclip:java6").tasks.named("jar") // Toki
++    val java17Jar = project(":paperclip:java17").tasks.named("shadowJar") // Toki
+     dependsOn(java6Jar, java17Jar)
+ 
+     from(zipTree(java6Jar.map { it.outputs.files.singleFile }))
+@@ -42,8 +42,8 @@ tasks.jar {
+ }
+ 
+ val sourcesJar by tasks.registering(Jar::class) {
+-    val java6Sources = project(":java6").tasks.named("sourcesJar")
+-    val java17Sources = project(":java17").tasks.named("sourcesJar")
++    val java6Sources = project(":paperclip:java6").tasks.named("sourcesJar") // toki
++    val java17Sources = project(":paperclip:java17").tasks.named("sourcesJar") // toki
+     dependsOn(java6Sources, java17Sources)
+ 
+     from(zipTree(java6Sources.map { it.outputs.files.singleFile }))
+diff --git a/java17/build.gradle.kts b/java17/build.gradle.kts
+index 8caec6ba157e0615019aed7e75671aca746fc103..5be37ca9af3dc2d0286c654880ec262d9fcb57af 100644
+--- a/java17/build.gradle.kts
++++ b/java17/build.gradle.kts
+@@ -1,6 +1,6 @@
+ plugins {
+     java
+-    id("com.github.johnrengelman.shadow") version "7.1.0"
++    id("com.github.johnrengelman.shadow") version "7.1.2" // toki
+ }
+ 
+ java {
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+deleted file mode 100644
+index 3fc8825dbf4aca34843829ff24e530589b1e4c94..0000000000000000000000000000000000000000
+--- a/settings.gradle.kts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-rootProject.name = "paperclip"
+-include("java6", "java17")
