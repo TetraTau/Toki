@@ -1,4 +1,8 @@
 # Toki
+<img src="toki_logo.png" align="right" width="150" height="150"
+    style="border-radius: 30%"
+/>
+
 Toki is a Paper fork which has built in Fabric loader.
 
 ### Join [discord](https://discord.gg/upTtNyvkNf) for discussion
