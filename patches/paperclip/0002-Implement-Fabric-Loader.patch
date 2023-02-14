@@ -5,7 +5,7 @@ Subject: [PATCH] Implement Fabric Loader
 
 
 diff --git a/build.gradle.kts b/build.gradle.kts
-index f18f9609e0878c861b30f038bf6bf03bdb4b5072..4ec6216ea1d46c722dd5fbb2960d28ad1af567f5 100644
+index 5696d6e64c2155faf3c17187ada0c843027b3b02..347a0a079d0edbe5c3020e49947afc75b3cc6eca 100644
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -21,6 +21,7 @@ tasks.jar {
@@ -17,10 +17,10 @@ index f18f9609e0878c861b30f038bf6bf03bdb4b5072..4ec6216ea1d46c722dd5fbb2960d28ad
      manifest {
          attributes(
 diff --git a/java17/build.gradle.kts b/java17/build.gradle.kts
-index bfa5d895aa11a3af3f3782749442ba137bb43edd..2df563db84620719f69433e6f0a46dae142ac55e 100644
+index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..554d7958bec38dc9b0f82cfb61831ec0baefe9c3 100644
 --- a/java17/build.gradle.kts
 +++ b/java17/build.gradle.kts
-@@ -21,11 +21,16 @@ repositories {
+@@ -21,14 +21,32 @@ repositories {
  
  dependencies {
      implementation("io.sigpipe:jbsdiff:1.0")
@@ -38,12 +38,28 @@ index bfa5d895aa11a3af3f3782749442ba137bb43edd..2df563db84620719f69433e6f0a46dae
          relocate(pack, "$prefix.$pack")
      }
  
+     exclude("META-INF/LICENSE.txt")
+     exclude("META-INF/NOTICE.txt")
+ }
++
++// Toki start - implement fabric loader
++tasks.processResources {
++    inputs.property("gameVersion", rootProject.property("gameVersion"))
++    inputs.property("tokiVersion", rootProject.property("tokiVersion"))
++    filesMatching("toki-install.properties") {
++        expand(
++            Pair("gameVersion", rootProject.property("gameVersion")),
++            Pair("tokiVersion", rootProject.property("tokiVersion"))
++        )
++    }
++}
++// Toki end
 diff --git a/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd3366ade91f8
+index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a0d1dc9eb
 --- /dev/null
 +++ b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,235 @@
 +/*
 + * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
 + *
@@ -66,9 +82,8 @@ index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd336
 +import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
 +import static java.nio.file.StandardOpenOption.WRITE;
 +
-+import java.io.File;
 +import java.io.IOException;
-+import java.io.InputStream;
++import java.io.InputStreamReader;
 +import java.net.MalformedURLException;
 +import java.net.URISyntaxException;
 +import java.net.URL;
@@ -76,18 +91,14 @@ index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd336
 +import java.nio.channels.Channels;
 +import java.nio.channels.FileChannel;
 +import java.nio.channels.ReadableByteChannel;
-+import java.nio.file.CopyOption;
-+import java.nio.file.FileStore;
-+import java.nio.file.FileSystem;
-+import java.nio.file.FileSystems;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.nio.file.Paths;
-+import java.nio.file.StandardCopyOption;
 +import java.security.CodeSource;
 +import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.List;
++import java.util.Properties;
 +import java.util.StringTokenizer;
 +import java.util.jar.Attributes;
 +import java.util.jar.JarFile;
@@ -107,14 +118,13 @@ index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd336
 +public final class FabricInstaller {
 +	private static final Path DATA_DIR = Paths.get(".fabric", "server");
 +
-+	public static LaunchData initialize(LoaderVersion loaderVersion, String gameVersion) {
-+
++	public static LaunchData initialize(LoaderVersion loaderVersion, String gameVersion, String tokiVersion) {
 +		try {
 +			final Path baseDir = Paths.get(".").toAbsolutePath().normalize();
 +			final Path dataDir = baseDir.resolve(DATA_DIR);
 +
 +			// Includes the mc version as this jar contains intermediary
-+			Path serverLaunchJar = dataDir.resolve(String.format("fabric-loader-server-%s-minecraft-%s.jar", loaderVersion.name, gameVersion));
++			Path serverLaunchJar = dataDir.resolve(String.format("fabric-loader-server-%s-minecraft-%s-toki-%s.jar", loaderVersion.name, gameVersion, tokiVersion));
 +			if (Files.exists(serverLaunchJar)) {
 +				try {
 +					List<Path> classPath = new ArrayList<>();
@@ -153,9 +163,25 @@ index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd336
 +	public static LaunchData initialize() {
 +		try {
 +			final Path fabricLoaderOutput = FabricInstaller.extractFabricLoaderToCache();
-+			return FabricInstaller.initialize(new net.fabricmc.installer.LoaderVersion(fabricLoaderOutput), "1.19.2");
++			final Properties properties = FabricInstaller.readInstallProperties();
++			return FabricInstaller.initialize(new net.fabricmc.installer.LoaderVersion(fabricLoaderOutput), properties.getProperty("gameVersion"), properties.getProperty("tokiVersion"));
 +		} catch (final IOException e) {
 +			throw new IllegalStateException("Failed to install fabric loader: ", e);
++		}
++	}
++
++	private static Properties readInstallProperties() {
++		final URL resource = FabricInstaller.class.getResource("/toki-install.properties");
++		if (resource != null) {
++			final Properties properties = new Properties();
++			try (final InputStreamReader inputStreamReader = new InputStreamReader(resource.openStream())) {
++				properties.load(inputStreamReader);
++				return properties;
++			} catch (final IOException e) {
++				throw new RuntimeException("Something went wrong while reading toki-install.properties: ", e);
++			}
++		} else {
++			throw new RuntimeException("Couldn't find toki-install.properties inside your paperclip jar!");
 +		}
 +	}
 +
@@ -270,35 +296,27 @@ index 0000000000000000000000000000000000000000..75d118888ca60580d3942599238cd336
 +	public record LaunchData(Path launchJar, String mainClass) {}
 +}
 diff --git a/java17/src/main/java/io/papermc/paperclip/Paperclip.java b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-index a10744d8d489b9ef3b6fcad850885c719a66b90f..2262443c62987d63dbf8df93889c76d4280b750d 100644
+index a10744d8d489b9ef3b6fcad850885c719a66b90f..db384ffbf3ade26651475c9597ba9f8db7dbae26 100644
 --- a/java17/src/main/java/io/papermc/paperclip/Paperclip.java
 +++ b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-@@ -1,5 +1,7 @@
- package io.papermc.paperclip;
- 
-+import com.sun.tools.javac.Main;
-+
- import java.io.BufferedReader;
- import java.io.IOException;
- import java.io.InputStream;
-@@ -25,21 +27,30 @@ public final class Paperclip {
+@@ -25,21 +25,30 @@ public final class Paperclip {
              System.exit(1);
          }
  
 -        final URL[] classpathUrls = setupClasspath();
--
--        final ClassLoader parentClassLoader = Paperclip.class.getClassLoader().getParent();
--        final URLClassLoader classLoader = new URLClassLoader(classpathUrls, parentClassLoader);
-+		//System.setProperty("fabric.debug.logLibClassification", "true");
++		// System.setProperty("fabric.debug.logLibClassification", "true");
 +		FabricInstaller.LaunchData launchData = FabricInstaller.initialize(); // Toki
 +		final URL[] classpathUrls = setupClasspath();
 +		FabricInstaller.setLibraryURLs(classpathUrls); // Toki
 +		final URLClassLoader classLoader = FabricInstaller.createFabricLoaderClassLoader(launchData); // Toki
  
+-        final ClassLoader parentClassLoader = Paperclip.class.getClassLoader().getParent();
+-        final URLClassLoader classLoader = new URLClassLoader(classpathUrls, parentClassLoader);
+-
 -        final String mainClassName = findMainClass();
 -        System.out.println("Starting " + mainClassName);
 +		final String mainClassName = findMainClass();
-+		System.setProperty("toki.main", "org/bukkit/craftbukkit/Main.class"); // Toki - Used in fabric loader in McLibrary
++		System.setProperty("toki.entrypoint", mainClassName); // Toki - Used in fabric loader in MinecraftGameProvider#launch
 +        System.out.println("Starting " + launchData.mainClass()); // Toki - implement fabric loader
  
          final Thread runThread = new Thread(() -> {
@@ -318,7 +336,7 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..2262443c62987d63dbf8df93889c76d4
              } catch (final Throwable t) {
                  throw Util.sneakyThrow(t);
              }
-@@ -81,11 +92,16 @@ public final class Paperclip {
+@@ -81,11 +90,16 @@ public final class Paperclip {
          final Collection<URL> versionUrls = classpathUrls.get("versions").values();
          final Collection<URL> libraryUrls = classpathUrls.get("libraries").values();
  
@@ -1261,14 +1279,6 @@ index 0000000000000000000000000000000000000000..fd2ddf3f6a9e3bed7c5b7aaf5431fff7
 +		return Integer.compare(partsA.length, partsB.length); // compare part count
 +	}
 +}
-diff --git a/java17/src/main/resources/install.properties b/java17/src/main/resources/install.properties
-new file mode 100644
-index 0000000000000000000000000000000000000000..314d71fbeef25bfcea4e6af7963d3f103983f1c9
---- /dev/null
-+++ b/java17/src/main/resources/install.properties
-@@ -0,0 +1,2 @@
-+fabric-loader-version=0.14.10
-+game-version=1.19.2
 diff --git a/java17/src/main/resources/lang/installer.properties b/java17/src/main/resources/lang/installer.properties
 new file mode 100644
 index 0000000000000000000000000000000000000000..bdc7b327c1235cc8aefc3d0740246a66f312c9c8
@@ -1810,3 +1820,11 @@ index 0000000000000000000000000000000000000000..71543f34b237ff4c7cfe6877b519d22b
 +prompt.server.overwrite=確定覆蓋現存啟動文稿？
 +tab.client=客戶端
 +tab.server=伺服器
+diff --git a/java17/src/main/resources/toki-install.properties b/java17/src/main/resources/toki-install.properties
+new file mode 100644
+index 0000000000000000000000000000000000000000..4033fc9d6326057ca916c6bc36c363c5527e81ff
+--- /dev/null
++++ b/java17/src/main/resources/toki-install.properties
+@@ -0,0 +1,2 @@
++gameVersion=${gameVersion}
++tokiVersion=${tokiVersion}

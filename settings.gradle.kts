@@ -17,7 +17,8 @@ include(
     "fabric-loader:minecraft",
     "paperclip",
     "paperclip:java6",
-    "paperclip:java17"
+    "paperclip:java17",
+    "test-toki-mod"
 )
 
 if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {

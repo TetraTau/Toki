@@ -18,21 +18,8 @@ index 01a9ec66c39162b0050118faf744f153f0cb2254..5e0de6eaba8c2f7ea7d9e10e560c2499
  
  	api("net.fabricmc:sponge-mixin:${project.mixin_version}") {
  		exclude module: 'launchwrapper'
-diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
-index c15c7695253e4306c9058a708392df1980308b6e..05547f663a0aef7c5ac9d08719a62ebf20f5d6be 100644
---- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
-+++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/McLibrary.java
-@@ -21,7 +21,7 @@ import net.fabricmc.loader.impl.game.LibClassifier.LibraryType;
- 
- enum McLibrary implements LibraryType {
- 	MC_CLIENT(EnvType.CLIENT, "net/minecraft/client/main/Main.class", "net/minecraft/client/MinecraftApplet.class", "com/mojang/minecraft/MinecraftApplet.class"),
--	MC_SERVER(EnvType.SERVER, "net/minecraft/server/Main.class", "net/minecraft/server/MinecraftServer.class", "com/mojang/minecraft/server/MinecraftServer.class"),
-+	MC_SERVER(EnvType.SERVER, System.getProperty("toki.main"), "net/minecraft/server/Main.class", "net/minecraft/server/MinecraftServer.class", "com/mojang/minecraft/server/MinecraftServer.class"), // Toki - add craftbukkit entrypoint
- 	MC_COMMON("net/minecraft/server/MinecraftServer.class"),
- 	MC_BUNDLER(EnvType.SERVER, "net/minecraft/bundler/Main.class"),
- 	REALMS(EnvType.CLIENT, "realmsVersion", "com/mojang/realmsclient/RealmsVersion.class"),
 diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
-index d51321551437bead68505a3c4f45a9af1e0c55e4..e9ce37202cef6376561c397afdd3a48818477a19 100644
+index d51321551437bead68505a3c4f45a9af1e0c55e4..21b3996a7ac5282f75c25aebaed630a07e81a50a 100644
 --- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 +++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 @@ -33,6 +33,8 @@ import java.util.Locale;
@@ -44,7 +31,7 @@ index d51321551437bead68505a3c4f45a9af1e0c55e4..e9ce37202cef6376561c397afdd3a488
  import net.fabricmc.api.EnvType;
  import net.fabricmc.loader.api.ObjectShare;
  import net.fabricmc.loader.api.VersionParsingException;
-@@ -438,6 +440,12 @@ public class MinecraftGameProvider implements GameProvider {
+@@ -438,11 +440,17 @@ public class MinecraftGameProvider implements GameProvider {
  		for (Path lib : miscGameLibraries) {
  			launcher.addToClassPath(lib);
  		}
@@ -57,6 +44,52 @@ index d51321551437bead68505a3c4f45a9af1e0c55e4..e9ce37202cef6376561c397afdd3a488
  	}
  
  	@Override
+ 	public void launch(ClassLoader loader) {
+-		String targetClass = entrypoint;
++		String targetClass = System.getProperty("toki.entrypoint"); // Toki - we need org.bukkit.craftbukkit.Main there, but we still need to patch the original server main method in EntrypointPatch.
+ 
+ 		if (envType == EnvType.CLIENT && targetClass.contains("Applet")) {
+ 			targetClass = "net.fabricmc.loader.impl.game.minecraft.applet.AppletMain";
+diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
+index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35bfab3bc0 100644
+--- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
++++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
+@@ -107,7 +107,7 @@ public class EntrypointPatch extends GamePatch {
+ 
+ 		if (gameEntrypoint == null) {
+ 			// main method searches
+-			MethodNode mainMethod = findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && isPublicStatic(method.access));
++			MethodNode mainMethod = findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("(Ljoptsimple/OptionSet;)V") && isPublicStatic(method.access)); // Toki - change main method
+ 
+ 			if (mainMethod == null) {
+ 				throw new RuntimeException("Could not find main method in " + entrypoint + "!");
+@@ -254,7 +254,7 @@ public class EntrypointPatch extends GamePatch {
+ 				}
+ 			}
+ 		} else {
+-			gameMethod = findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && isPublicStatic(method.access));
++			gameMethod = findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("(Ljoptsimple/OptionSet;)V") && isPublicStatic(method.access)); // Toki - change main method
+ 		}
+ 
+ 		if (gameMethod == null) {
+@@ -306,7 +306,7 @@ public class EntrypointPatch extends GamePatch {
+ 				// If we do not find this, then we are certain this is 20w22a.
+ 				MethodNode serverStartMethod = findMethod(mainClass, method -> {
+ 					if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 // reject non-synthetic
+-							|| method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V")) { // reject main method (theoretically superfluous now)
++							|| method.name.equals("main") && method.desc.equals("(Ljoptsimple/OptionSet;)V")) { // reject main method (theoretically superfluous now) // Toki - change main method to fit cb patch
+ 						return false;
+ 					}
+ 
+@@ -396,7 +396,7 @@ public class EntrypointPatch extends GamePatch {
+ 								return false;
+ 							}
+ 
+-							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljava/lang/Thread;");
++							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[2].getDescriptor().equals("Ljava/lang/Thread;"); // Toki - change constructor finding
+ 						}
+ 
+ 						return false;
 diff --git a/settings.gradle b/settings.gradle
 deleted file mode 100644
 index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..0000000000000000000000000000000000000000
