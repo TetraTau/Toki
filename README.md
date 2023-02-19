@@ -2,21 +2,26 @@
 
 # Toki
 
-Toki is a Paper fork which has built in Fabric loader.
+Toki is a Paper fork which provides a Fabric-based modding platform for developers.
 
 ### Join [discord](https://discord.gg/upTtNyvkNf) for discussion
 
 ## State
-Highly WIP. For now it launches without errors, but there is no remapping from spigot to intermediary/obfuscated, 
-it means that none of exisitng mods work on it, implementation / fixes soon!
+Highly WIP. The Fabric Loader on top of Paper is implemented, see `toki-test-mod`.
+See TODOs / Plans for more info about the state.
 
-## Reasons, purpose and policy
-The reasons why it exists are:
-1. To allow easy mixin / mod development on CraftBukkit based platforms for developers who want to do it.
-2. (Higly experimental, generally not supported) To allow some already existing fabric mods to run on a CraftBukkit based platform.
+## Q & A
+Q: Will my fabric mod `X` work on it?
+A: No, as far as mod developer didn't port their mod on this platform.
+
+Q: Why it doesn't allow to launch already existing Fabric mods?
+A: It is so unlikely that already exisiting mods will work, Paper makes so many changes so they break mods. (Though, if you are a developer and you have knowledge of mapping generation, you can discuss adding remapping of mods from intermediary to spigot as an experimental feature in this project.)
 
 ## TODOs / Plans
-- [ ] Remapping of patched Paper server to whatever fabric uses at runtime to theoretically allow *some* mods to work.
-- [ ] Gradle plugin to allow mod development with Toki.
-- [ ] Include Paper Plugins PR and allow plugins depend on fabric mods using `paper-plugin.yml`.
-- [ ] Make Bukkit API flexible enough to handle modded content. (Using Converters / EnumCreators from Registry PR)
+- [x] Implement Fabric Loader on top of Paper.
+- [ ] Create a Loom fork which supports patched Paper server source.
+- [ ] Create a Toki API which has a compatibility with the Fabric API on a client side. (Registry sync)
+- [ ] Make Bukkit API flexible enough to handle modded content. (Using Converters / EnumCreators from the Paper Registry PR)
+
+## How it works?
+This project patches Paperclip to support Fabric Loader. Patched Paperclip contains patched Fabric Loader jar, then it extracts it and installs needed libraries, then it makes patched Paper server jar and launches patched Fabric Loader telling it to start the patched server Jar. Patched Fabric Loader has changes in Knot classpath libraries, because Paper ships additional libraries and we need to tell Fabric Loader to load them, and also it has changes in entrypoint, because CraftBukkit drastically changes `net.minecraft.server.Main`.
