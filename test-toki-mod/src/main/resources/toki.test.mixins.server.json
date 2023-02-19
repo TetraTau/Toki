@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "net.tetratau.toki.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [
+    "BootstrapMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

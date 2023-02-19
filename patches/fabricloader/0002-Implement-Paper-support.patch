@@ -115,6 +115,74 @@ index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..00000000000000000000000000000000
 -	println("Minecraft test sub project requires java 17 or higher!")
 -}
 \ No newline at end of file
+diff --git a/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java b/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
+index ef918b9edad8c58bc9a77870de88cc73fc9904ef..7989133389f7cbb06c4537211dd61b896bc9b576 100644
+--- a/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
++++ b/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
+@@ -195,7 +195,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
+ 	}
+ 
+ 	private void setup() throws ModResolutionException {
+-		boolean remapRegularMods = isDevelopmentEnvironment();
++		boolean remapRegularMods = false; // Toki - TODO: enable remapping
+ 		VersionOverrides versionOverrides = new VersionOverrides();
+ 		DependencyOverrides depOverrides = new DependencyOverrides(configDir);
+ 
+diff --git a/src/main/java/net/fabricmc/loader/impl/discovery/IntermediarySpigotMappings.java b/src/main/java/net/fabricmc/loader/impl/discovery/IntermediarySpigotMappings.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..00410e1bda684d22ed5bc8610b4ae07e18c7b00d
+--- /dev/null
++++ b/src/main/java/net/fabricmc/loader/impl/discovery/IntermediarySpigotMappings.java
+@@ -0,0 +1,36 @@
++package net.fabricmc.loader.impl.discovery;
++
++import net.fabricmc.mapping.tree.TinyMappingFactory;
++import net.fabricmc.mapping.tree.TinyTree;
++
++import java.io.BufferedReader;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.nio.file.Files;
++import java.nio.file.Paths;
++
++/**
++ * TODO make remapping in RuntimeModRemapper.
++ */
++public final class IntermediarySpigotMappings {
++	private IntermediarySpigotMappings() {}
++	private static TinyTree SPIGOT_TO_INTERMEDIARY;
++
++	public static TinyTree getMappings() {
++		if (SPIGOT_TO_INTERMEDIARY == null)
++			return IntermediarySpigotMappings.loadIntermediarySpigotMapping();
++		return SPIGOT_TO_INTERMEDIARY;
++	}
++
++	private static TinyTree loadIntermediarySpigotMapping() {
++		final String intermediaryToSpigotMappingsFile = System.getProperty("toki.mappings");
++		System.out.println("mappings path: " + intermediaryToSpigotMappingsFile);
++		try (BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(Files.newInputStream(Paths.get(intermediaryToSpigotMappingsFile).toFile().toPath())))) {
++			TinyTree tinyTree = TinyMappingFactory.loadWithDetection(bufferedReader);
++			IntermediarySpigotMappings.SPIGOT_TO_INTERMEDIARY = tinyTree;
++			return tinyTree;
++		} catch (final IOException e) {
++			throw new RuntimeException("Failed to read intermediary to spigot mappings: ", e);
++		}
++	}
++}
+diff --git a/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java b/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
+index c162461a107b74e8d3c8ad8430ac7fcb46202391..d6e84b3366e6171bdb243980aef91d5e7293586a 100644
+--- a/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
++++ b/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
+@@ -259,7 +259,7 @@ public final class Knot extends FabricLauncherBase {
+ 	@Override
+ 	public String getTargetNamespace() {
+ 		// TODO: Won't work outside of Yarn
+-		return isDevelopment ? "named" : "intermediary";
++		return isDevelopment ? "named" : "intermediary"; // Toki - TODO: spigot mappings remapping
+ 	}
+ 
+ 	@Override
 diff --git a/src/main/resources/fabric-installer.json b/src/main/resources/fabric-installer.json
 index 01d3601816b0d65ab4eec3f936de22b2868f0a0a..e0ff157c9af93575c81fa8ddee3379771593d1d2 100644
 --- a/src/main/resources/fabric-installer.json

@@ -17,14 +17,16 @@ index 5696d6e64c2155faf3c17187ada0c843027b3b02..347a0a079d0edbe5c3020e49947afc75
      manifest {
          attributes(
 diff --git a/java17/build.gradle.kts b/java17/build.gradle.kts
-index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..554d7958bec38dc9b0f82cfb61831ec0baefe9c3 100644
+index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..8acc8f57c82fa3f814359fa36ac7092081938a71 100644
 --- a/java17/build.gradle.kts
 +++ b/java17/build.gradle.kts
-@@ -21,14 +21,32 @@ repositories {
+@@ -21,14 +21,38 @@ repositories {
  
  dependencies {
      implementation("io.sigpipe:jbsdiff:1.0")
 +    // Toki start - implement fabric loader
++    implementation("net.fabricmc:lorenz-tiny:4.0.2") // mapping generation
++    implementation("org.cadixdev:lorenz-io-proguard:0.5.7") // mojmap reading
 +    implementation("org.sharegov:mjson:1.4.1") {
 +        isTransitive = false
 +    }
@@ -46,20 +48,24 @@ index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..554d7958bec38dc9b0f82cfb61831ec0
 +tasks.processResources {
 +    inputs.property("gameVersion", rootProject.property("gameVersion"))
 +    inputs.property("tokiVersion", rootProject.property("tokiVersion"))
++    inputs.property("spigotMappingsRef", rootProject.property("spigotMappingsRef"))
++    inputs.property("mojangMappingsRef", rootProject.property("mojangMappingsRef"))
 +    filesMatching("toki-install.properties") {
 +        expand(
 +            Pair("gameVersion", rootProject.property("gameVersion")),
-+            Pair("tokiVersion", rootProject.property("tokiVersion"))
++            Pair("tokiVersion", rootProject.property("tokiVersion")),
++            Pair("spigotMappingsRef", rootProject.property("spigotMappingsRef")),
++            Pair("mojangMappingsRef", rootProject.property("mojangMappingsRef"))
 +        )
 +    }
 +}
 +// Toki end
 diff --git a/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a0d1dc9eb
+index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcdffedaf4a
 --- /dev/null
 +++ b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,259 @@
 +/*
 + * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
 + *
@@ -82,6 +88,7 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
 +import static java.nio.file.StandardOpenOption.WRITE;
 +
++import java.io.File;
 +import java.io.IOException;
 +import java.io.InputStreamReader;
 +import java.net.MalformedURLException;
@@ -99,10 +106,12 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +import java.util.Arrays;
 +import java.util.List;
 +import java.util.Properties;
++import java.util.StringJoiner;
 +import java.util.StringTokenizer;
 +import java.util.jar.Attributes;
 +import java.util.jar.JarFile;
 +import java.util.jar.Manifest;
++import java.util.stream.Collectors;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipError;
 +import java.util.zip.ZipInputStream;
@@ -164,7 +173,14 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +		try {
 +			final Path fabricLoaderOutput = FabricInstaller.extractFabricLoaderToCache();
 +			final Properties properties = FabricInstaller.readInstallProperties();
-+			return FabricInstaller.initialize(new net.fabricmc.installer.LoaderVersion(fabricLoaderOutput), properties.getProperty("gameVersion"), properties.getProperty("tokiVersion"));
++			final String gameVersion = properties.getProperty("gameVersion");
++			/*MappingsUtil.generateIntermediaryToSpigotMappings(
++					Paths.get(".toki"),
++					gameVersion,
++					properties.getProperty("spigotMappingsRef"),
++					properties.getProperty("mojangMappingsRef")
++			);*/
++			return FabricInstaller.initialize(new net.fabricmc.installer.LoaderVersion(fabricLoaderOutput), gameVersion, properties.getProperty("tokiVersion"));
 +		} catch (final IOException e) {
 +			throw new IllegalStateException("Failed to install fabric loader: ", e);
 +		}
@@ -249,9 +265,9 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +
 +	public static Path extractFabricLoaderToCache() {
 +		try {
-+			final Path fabricLoaderOutput = Path.of(".toki");
-+			Files.createDirectories(fabricLoaderOutput);
-+			return FabricInstaller.extractFabricLoader(fabricLoaderOutput);
++			final Path cache = Path.of(".toki");
++			Files.createDirectories(cache);
++			return FabricInstaller.extractFabricLoader(cache);
 +		} catch (final IOException e) {
 +			throw new IllegalStateException("Couldn't extract fabric loader: ", e);
 +		}
@@ -265,6 +281,20 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +		} catch (final MalformedURLException e) {
 +			throw new IllegalStateException("Something went wrong in transforming URL while creating FabricLoader class loader: ", e);
 +		}
++	}
++
++	public static void setupRemappingClasspath(URL[] libraries, LaunchData launchData) {
++		final List<File> remapClasspath = new ArrayList<>();
++		remapClasspath.addAll(Arrays.stream(libraries).map(lib -> new File(lib.getPath())).toList());
++		final List<Path> classPath = new ArrayList<>();
++		try {
++			readManifest(launchData.launchJar(), classPath);
++			remapClasspath.addAll(classPath.stream().map(Path::toFile).toList());
++		} catch (IOException e) {
++			throw new RuntimeException("Something went wrong while reading server launch jar manifest for the remap classpath", e);
++		}
++		remapClasspath.add(new File(Paperclip.versions.stream().findFirst().get().getPath()));
++		System.setProperty("fabric.remapClasspathFile", remapClasspath.stream().map(File::getAbsolutePath).collect(Collectors.joining(File.pathSeparator)));
 +	}
 +
 +	public static void setLibraryURLs(final URL[] libraries) {
@@ -295,11 +325,108 @@ index 0000000000000000000000000000000000000000..4d550542ea854aad411b1c39054f041a
 +
 +	public record LaunchData(Path launchJar, String mainClass) {}
 +}
+diff --git a/java17/src/main/java/io/papermc/paperclip/MappingsUtil.java b/java17/src/main/java/io/papermc/paperclip/MappingsUtil.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..794e208181d3f640b396d8c1aff0bfd0eb342ee2
+--- /dev/null
++++ b/java17/src/main/java/io/papermc/paperclip/MappingsUtil.java
+@@ -0,0 +1,83 @@
++package io.papermc.paperclip;
++
++import static java.nio.file.StandardOpenOption.CREATE;
++import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
++import static java.nio.file.StandardOpenOption.WRITE;
++
++import net.fabricmc.installer.util.Utils;
++import net.fabricmc.lorenztiny.TinyMappingFormat;
++import org.cadixdev.lorenz.MappingSet;
++import org.cadixdev.lorenz.io.MappingFormats;
++import org.cadixdev.lorenz.merge.MappingSetMerger;
++
++import java.io.IOException;
++import java.net.URL;
++import java.nio.channels.Channels;
++import java.nio.channels.FileChannel;
++import java.nio.channels.ReadableByteChannel;
++import java.nio.file.Path;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipInputStream;
++
++public class MappingsUtil {
++	private MappingsUtil() {}
++
++	public static void generateIntermediaryToSpigotMappings(final Path cache, String gameVersion, String spigotMappingsRef, String mojangMappingsRef) {
++		final Path intermediary = cache.resolve("inter.jar");
++		final Path intermediaryMaps = cache.resolve("intermediary.tiny");
++		try {
++			Utils.downloadFile(new URL(String.format("https://maven.fabricmc.net/net/fabricmc/intermediary/%s/intermediary-%s-v2.jar", gameVersion, gameVersion)), intermediary);
++		} catch (final IOException e) {
++			throw new RuntimeException("Couldn't download intermediary v2: ", e);
++		}
++
++		try (ZipInputStream zipInputStream = new ZipInputStream(intermediary.toUri().toURL().openStream())) {
++			for (ZipEntry zipEntry = zipInputStream.getNextEntry(); zipEntry != null; zipEntry = zipInputStream.getNextEntry()) {
++				if (zipEntry.getName().equals("mappings/mappings.tiny")) {
++					try (
++							final ReadableByteChannel inputChannel = Channels.newChannel(zipInputStream);
++							final FileChannel outputChannel = FileChannel.open(intermediaryMaps, CREATE, WRITE, TRUNCATE_EXISTING)
++					) {
++						outputChannel.transferFrom(inputChannel, 0, Long.MAX_VALUE);
++					}
++					break;
++				}
++			}
++		} catch (final IOException e) {
++			throw new RuntimeException("Couldn't extract intermediary mappings: ", e);
++		}
++
++		final Path runtimeMaps = cache.resolve("runtime.mapping");
++
++		boolean useSpigot = true;
++		try {
++			if (useSpigot) {
++				Utils.downloadFile(new URL(String.format("https://hub.spigotmc.org/stash/projects/SPIGOT/repos/builddata/raw/mappings/bukkit-%s-cl.csrg?at=%s", gameVersion, spigotMappingsRef)), runtimeMaps);
++			} else {
++				Utils.downloadFile(new URL(String.format("https://piston-data.mojang.com/v1/objects/%s/server.txt", mojangMappingsRef)), runtimeMaps);
++			}
++		} catch (IOException e) {
++			throw new RuntimeException("Couldn't download spigot mappings: ", e);
++		}
++
++		final Path intermediaryToSpigotMaps = cache.resolve("output.tiny");
++
++		try {
++			MappingSet intermediarySet = TinyMappingFormat.TINY_2.read(intermediaryMaps, "official", "intermediary");
++			MappingSet namedSet;
++			if (useSpigot) {
++				namedSet = MappingFormats.CSRG.read(runtimeMaps);
++			} else {
++				namedSet = MappingFormats.byId("proguard").read(runtimeMaps);
++			}
++			MappingSet merge = MappingSetMerger.create(
++					namedSet.reverse(),
++					intermediarySet
++			).merge();
++			TinyMappingFormat.TINY.write(merge.reverse(), intermediaryToSpigotMaps, "intermediary", "spigot");
++			System.setProperty("toki.mappings", intermediaryToSpigotMaps.toAbsolutePath().toString()); // Used in fabric loader in IntermediarySpigotMappings.
++		} catch (final IOException e) {
++			throw new RuntimeException("Failed to merge intermediary with spigot mappings: ", e);
++		}
++	}
++}
 diff --git a/java17/src/main/java/io/papermc/paperclip/Paperclip.java b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-index a10744d8d489b9ef3b6fcad850885c719a66b90f..db384ffbf3ade26651475c9597ba9f8db7dbae26 100644
+index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff30bc38ce4 100644
 --- a/java17/src/main/java/io/papermc/paperclip/Paperclip.java
 +++ b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-@@ -25,21 +25,30 @@ public final class Paperclip {
+@@ -18,6 +18,7 @@ import java.util.HashMap;
+ import java.util.Map;
+ 
+ public final class Paperclip {
++	public static Collection<URL> versions; // Toki
+ 
+     public static void main(final String[] args) {
+         if (Path.of("").toAbsolutePath().toString().contains("!")) {
+@@ -25,21 +26,31 @@ public final class Paperclip {
              System.exit(1);
          }
  
@@ -308,6 +435,7 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..db384ffbf3ade26651475c9597ba9f8d
 +		FabricInstaller.LaunchData launchData = FabricInstaller.initialize(); // Toki
 +		final URL[] classpathUrls = setupClasspath();
 +		FabricInstaller.setLibraryURLs(classpathUrls); // Toki
++		FabricInstaller.setupRemappingClasspath(classpathUrls, launchData); // Toki
 +		final URLClassLoader classLoader = FabricInstaller.createFabricLoaderClassLoader(launchData); // Toki
  
 -        final ClassLoader parentClassLoader = Paperclip.class.getClassLoader().getParent();
@@ -336,11 +464,11 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..db384ffbf3ade26651475c9597ba9f8d
              } catch (final Throwable t) {
                  throw Util.sneakyThrow(t);
              }
-@@ -81,11 +90,16 @@ public final class Paperclip {
+@@ -81,11 +92,16 @@ public final class Paperclip {
          final Collection<URL> versionUrls = classpathUrls.get("versions").values();
          final Collection<URL> libraryUrls = classpathUrls.get("libraries").values();
  
-+		System.out.println("version urls: " + versionUrls);
++		Paperclip.versions = versionUrls;
 +		System.setProperty("fabric.gameJarPath", versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).getPath()); // Toky - implement fabric loader
 +
          final URL[] emptyArray = new URL[0];
@@ -1822,9 +1950,11 @@ index 0000000000000000000000000000000000000000..71543f34b237ff4c7cfe6877b519d22b
 +tab.server=伺服器
 diff --git a/java17/src/main/resources/toki-install.properties b/java17/src/main/resources/toki-install.properties
 new file mode 100644
-index 0000000000000000000000000000000000000000..4033fc9d6326057ca916c6bc36c363c5527e81ff
+index 0000000000000000000000000000000000000000..5c66ce800c9248093ff49e1610cba38c5dc274a9
 --- /dev/null
 +++ b/java17/src/main/resources/toki-install.properties
-@@ -0,0 +1,2 @@
+@@ -0,0 +1,4 @@
 +gameVersion=${gameVersion}
 +tokiVersion=${tokiVersion}
++spigotMappingsRef=${spigotMappingsRef}
++mojangMappingsRef=${mojangMappingsRef}

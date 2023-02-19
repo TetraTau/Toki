@@ -112,7 +112,7 @@ tasks {
         )
     }
 
-    fun createPatchTasks(orgName: String, projectName: String, patchDirName: String, taskName: String, refPropertyName: String) {
+    fun createPatchTasks(repoUrl: String, projectName: String, patchDirName: String, taskName: String, refPropertyName: String) {
         val projPatchDir = layout.projectDirectory.dir("patches/$patchDirName")
         val projectDir = layout.projectDirectory.dir(projectName.toLowerCase())
         val refCommit = providers.gradleProperty(refPropertyName).get()
@@ -122,7 +122,7 @@ tasks {
         val checkOutRepoTask = register<CheckoutRepo>("clone$taskName") {
             group = "toki"
             repoName.set(patchDirName)
-            url.set(github(orgName, projectName))
+            url.set(repoUrl)
             ref.set(refCommit)
             workDir.set(layout.cacheDir(io.papermc.paperweight.util.constants.UPSTREAMS))
         }
@@ -149,9 +149,8 @@ tasks {
         }
     }
 
-    createPatchTasks("FabricMC", "fabric-loader", "fabricloader", "FabricLoader", "fabricloaderRef") // Do we need to patch fabric loader?
-    createPatchTasks("PaperMC", "Paperclip", "paperclip", "Paperclip", "paperclipRef")
-
+    createPatchTasks(github("FabricMC", "fabric-loader"), "fabric-loader", "fabricloader", "FabricLoader", "fabricloaderRef")
+    createPatchTasks(github("PaperMC", "Paperclip"), "Paperclip", "paperclip", "Paperclip", "paperclipRef")
 }
 
 fun github(owner: String, repo: String): String {

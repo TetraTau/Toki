@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "toki-test",
+  "name": "Toki Test Mod",
+  "version": "1.0.0",
+  "entrypoints": {
+    "main": [
+      "net.tetratau.toki.TokiMod"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "toki.test.mixins.server.json",
+      "environment": "server"
+    }
+  ],
+  "depends": {
+    "java": ">=17",
+    "minecraft": "~1.19.3",
+    "fabricloader": ">=0.14.14"
+  }
+}
