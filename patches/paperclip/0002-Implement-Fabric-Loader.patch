@@ -62,10 +62,10 @@ index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..8acc8f57c82fa3f814359fa36ac70920
 +// Toki end
 diff --git a/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcdffedaf4a
+index 0000000000000000000000000000000000000000..8d99c4a1912848c825e58d0744868ecc9683164c
 --- /dev/null
 +++ b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,265 @@
 +/*
 + * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
 + *
@@ -298,7 +298,13 @@ index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcd
 +	}
 +
 +	public static void setLibraryURLs(final URL[] libraries) {
-+		final String s = Json.make(Arrays.stream(libraries).map(URL::getPath).toList()).toString();
++		final String s = Json.make(Arrays.stream(libraries).map(url -> {
++			try {
++				return Paths.get(url.toURI()).toAbsolutePath().toString();
++			} catch (URISyntaxException e) {
++				throw new RuntimeException("Something went wrong while constructing library URLs for fabric loader: ", e);
++			}
++		}).toList()).toString();
 +		System.setProperty("toki.libraries", s); // Used in MinecraftGameProvider#unlockClassPath
 +	}
 +
@@ -415,10 +421,17 @@ index 0000000000000000000000000000000000000000..794e208181d3f640b396d8c1aff0bfd0
 +	}
 +}
 diff --git a/java17/src/main/java/io/papermc/paperclip/Paperclip.java b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff30bc38ce4 100644
+index a10744d8d489b9ef3b6fcad850885c719a66b90f..df3fcf25c8dbe21b5c9cc37207b2ff8074605c42 100644
 --- a/java17/src/main/java/io/papermc/paperclip/Paperclip.java
 +++ b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-@@ -18,6 +18,7 @@ import java.util.HashMap;
+@@ -12,12 +12,14 @@ import java.net.URLClassLoader;
+ import java.nio.file.FileSystem;
+ import java.nio.file.FileSystems;
+ import java.nio.file.Path;
++import java.nio.file.Paths;
+ import java.util.Arrays;
+ import java.util.Collection;
+ import java.util.HashMap;
  import java.util.Map;
  
  public final class Paperclip {
@@ -426,7 +439,7 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff3
  
      public static void main(final String[] args) {
          if (Path.of("").toAbsolutePath().toString().contains("!")) {
-@@ -25,21 +26,31 @@ public final class Paperclip {
+@@ -25,21 +27,31 @@ public final class Paperclip {
              System.exit(1);
          }
  
@@ -464,12 +477,16 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff3
              } catch (final Throwable t) {
                  throw Util.sneakyThrow(t);
              }
-@@ -81,11 +92,16 @@ public final class Paperclip {
+@@ -81,11 +93,20 @@ public final class Paperclip {
          final Collection<URL> versionUrls = classpathUrls.get("versions").values();
          final Collection<URL> libraryUrls = classpathUrls.get("libraries").values();
  
 +		Paperclip.versions = versionUrls;
-+		System.setProperty("fabric.gameJarPath", versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).getPath()); // Toky - implement fabric loader
++        try {
++			System.setProperty("fabric.gameJarPath", Paths.get(versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).toURI()).toAbsolutePath().toString()); // Toky - implement fabric loader
++        } catch (Throwable e) {
++			throw new RuntimeException("failed to set game jar path: ", e);
++        }
 +
          final URL[] emptyArray = new URL[0];
 +		/*

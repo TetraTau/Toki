@@ -51,7 +51,7 @@ index d51321551437bead68505a3c4f45a9af1e0c55e4..21b3996a7ac5282f75c25aebaed630a0
  		if (envType == EnvType.CLIENT && targetClass.contains("Applet")) {
  			targetClass = "net.fabricmc.loader.impl.game.minecraft.applet.AppletMain";
 diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
-index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35bfab3bc0 100644
+index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ef22c154ab6aadf0853c1981a067b745a1fd6c61 100644
 --- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
 +++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
 @@ -107,7 +107,7 @@ public class EntrypointPatch extends GamePatch {
@@ -86,7 +86,7 @@ index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35
  							}
  
 -							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljava/lang/Thread;");
-+							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[2].getDescriptor().equals("Ljava/lang/Thread;"); // Toki - change constructor finding
++							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[3].getDescriptor().equals("Ljava/lang/Thread;"); // Toki - change constructor finding
  						}
  
  						return false;
