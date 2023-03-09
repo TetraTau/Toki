@@ -19,7 +19,7 @@ index 01a9ec66c39162b0050118faf744f153f0cb2254..5e0de6eaba8c2f7ea7d9e10e560c2499
  	api("net.fabricmc:sponge-mixin:${project.mixin_version}") {
  		exclude module: 'launchwrapper'
 diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
-index d51321551437bead68505a3c4f45a9af1e0c55e4..21b3996a7ac5282f75c25aebaed630a07e81a50a 100644
+index d51321551437bead68505a3c4f45a9af1e0c55e4..5fc3239f9e6f3b488f5804881331c9d4564a5bc5 100644
 --- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 +++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 @@ -33,6 +33,8 @@ import java.util.Locale;
@@ -31,6 +31,15 @@ index d51321551437bead68505a3c4f45a9af1e0c55e4..21b3996a7ac5282f75c25aebaed630a0
  import net.fabricmc.api.EnvType;
  import net.fabricmc.loader.api.ObjectShare;
  import net.fabricmc.loader.api.VersionParsingException;
+@@ -148,7 +150,7 @@ public class MinecraftGameProvider implements GameProvider {
+ 
+ 	@Override
+ 	public boolean isObfuscated() {
+-		return true; // generally yes...
++		return false; // generally yes... // Toki - no
+ 	}
+ 
+ 	@Override
 @@ -438,11 +440,17 @@ public class MinecraftGameProvider implements GameProvider {
  		for (Path lib : miscGameLibraries) {
  			launcher.addToClassPath(lib);
