@@ -11,12 +11,24 @@ Highly WIP. The Fabric Loader on top of Paper is implemented, see `toki-test-mod
 See TODOs / Plans for more info about the state.
 
 ## Q & A
-Q: Will my fabric mod `X` work on it?
+Q: Will my fabric mod `X` work on it? \
 A: No, as far as mod developer didn't port their mod on this platform.
 
-Q: Why it doesn't allow to launch already existing Fabric mods?
+Q: Why it doesn't allow to launch already existing Fabric mods? \
 A: It is so unlikely that already exisiting mods will work, Paper makes so many changes so they break mods. (Though, if you are a developer and you have knowledge of mapping generation, you can discuss adding remapping of mods from intermediary to spigot as an experimental feature in this project.)
 
+## How to build
+Generally, the build process the same as Paper's, except you also need to run `./gradlew applyFabricLoaderPatches` and `./gradlew applyPaperclipPatches`.
+```
+git clone https://github.com/TetraTau/Toki.git
+./gradlew applyPatches
+./gradlew applyFabricLoaderPatches
+./gradlew applyPaperclipPatches
+  For producion: (spigot mappings)
+./gradlew createReobfPaperclipJar
+  For testing: (mojang mappings)
+./gradlew createMojmapBundlerJar
+```
 ## TODOs / Plans
 - [x] Implement Fabric Loader on top of Paper.
 - [ ] Create a Loom fork which supports patched Paper server source.
