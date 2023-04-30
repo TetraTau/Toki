@@ -1,9 +1,13 @@
 pluginManagement {
     repositories {
         gradlePluginPortal()
-        maven("https://papermc.io/repo/repository/maven-public/")
+        maven("https://repo.papermc.io/repository/maven-public/")
         maven("https://maven.fabricmc.net")
     }
+}
+
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.4.0"
 }
 
 rootProject.name = "toki"
@@ -15,6 +19,7 @@ include(
     "test-plugin",
     "fabric-loader",
     "fabric-loader:minecraft",
+    "fabric-loader:junit",
     "paperclip",
     "paperclip:java6",
     "paperclip:java17",

@@ -5,7 +5,7 @@ Subject: [PATCH] Implement Paper support
 
 
 diff --git a/build.gradle b/build.gradle
-index 01a9ec66c39162b0050118faf744f153f0cb2254..5e0de6eaba8c2f7ea7d9e10e560c2499a95f27ad 100644
+index cc17e2b64c534ba74b28301c78feb9ddeb1ed225..d3b1e2208dc7c5202ec09b9e43349f91855fabb6 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -69,6 +69,9 @@ dependencies {
@@ -19,7 +19,7 @@ index 01a9ec66c39162b0050118faf744f153f0cb2254..5e0de6eaba8c2f7ea7d9e10e560c2499
  	api("net.fabricmc:sponge-mixin:${project.mixin_version}") {
  		exclude module: 'launchwrapper'
 diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
-index d51321551437bead68505a3c4f45a9af1e0c55e4..5fc3239f9e6f3b488f5804881331c9d4564a5bc5 100644
+index b3b4659f38248abb999b1057cf7d8a8dfa2cc198..048c484893f3d5e31548f44145dcf4b519688429 100644
 --- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 +++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider.java
 @@ -33,6 +33,8 @@ import java.util.Locale;
@@ -40,7 +40,7 @@ index d51321551437bead68505a3c4f45a9af1e0c55e4..5fc3239f9e6f3b488f5804881331c9d4
  	}
  
  	@Override
-@@ -438,11 +440,17 @@ public class MinecraftGameProvider implements GameProvider {
+@@ -439,11 +441,17 @@ public class MinecraftGameProvider implements GameProvider {
  		for (Path lib : miscGameLibraries) {
  			launcher.addToClassPath(lib);
  		}
@@ -101,10 +101,10 @@ index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35
  						return false;
 diff --git a/settings.gradle b/settings.gradle
 deleted file mode 100644
-index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..0000000000000000000000000000000000000000
+index 53ecb17d9c2084e03b1939e5fbf3b43753836464..0000000000000000000000000000000000000000
 --- a/settings.gradle
 +++ /dev/null
-@@ -1,18 +0,0 @@
+@@ -1,19 +0,0 @@
 -pluginManagement {
 -	repositories {
 -		maven {
@@ -117,6 +117,7 @@ index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..00000000000000000000000000000000
 -rootProject.name='fabric-loader'
 -
 -include "minecraft"
+-include "junit"
 -
 -if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
 -	include "minecraft:minecraft-test"
@@ -125,10 +126,10 @@ index 9c7c525d2c495a109c6fccf11bf6a4123d0e38c8..00000000000000000000000000000000
 -}
 \ No newline at end of file
 diff --git a/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java b/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
-index ef918b9edad8c58bc9a77870de88cc73fc9904ef..7989133389f7cbb06c4537211dd61b896bc9b576 100644
+index 9ad8408db379e7a01b50cac95dd5bb8a217c204c..cdca3057c4f6744f4cd41a7c7d9a3adba2e36466 100644
 --- a/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
 +++ b/src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java
-@@ -195,7 +195,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
+@@ -197,7 +197,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
  	}
  
  	private void setup() throws ModResolutionException {
@@ -180,7 +181,7 @@ index 0000000000000000000000000000000000000000..00410e1bda684d22ed5bc8610b4ae07e
 +	}
 +}
 diff --git a/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java b/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
-index c162461a107b74e8d3c8ad8430ac7fcb46202391..d6e84b3366e6171bdb243980aef91d5e7293586a 100644
+index 6c273f4ce30790d79400ea30adf030a8bf04447d..85919f88a5f9568af79f93296123039e4bf69271 100644
 --- a/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
 +++ b/src/main/java/net/fabricmc/loader/impl/launch/knot/Knot.java
 @@ -259,7 +259,7 @@ public final class Knot extends FabricLauncherBase {
@@ -193,7 +194,7 @@ index c162461a107b74e8d3c8ad8430ac7fcb46202391..d6e84b3366e6171bdb243980aef91d5e
  
  	@Override
 diff --git a/src/main/resources/fabric-installer.json b/src/main/resources/fabric-installer.json
-index 01d3601816b0d65ab4eec3f936de22b2868f0a0a..e0ff157c9af93575c81fa8ddee3379771593d1d2 100644
+index 49dac23e8453e78938338dfc61590fcefd1edc27..9aac60bc8fc731eb1a26942067d315d6a40dfebb 100644
 --- a/src/main/resources/fabric-installer.json
 +++ b/src/main/resources/fabric-installer.json
 @@ -39,6 +39,10 @@

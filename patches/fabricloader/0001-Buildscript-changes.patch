@@ -5,7 +5,7 @@ Subject: [PATCH] Buildscript changes
 
 
 diff --git a/build.gradle b/build.gradle
-index 3229e092695e80db3a7090166a41fba2cd9f2669..01a9ec66c39162b0050118faf744f153f0cb2254 100644
+index 25584794fc1e1b4cc9631111be6282c7ba929bb2..cc17e2b64c534ba74b28301c78feb9ddeb1ed225 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -30,7 +30,7 @@ allprojects {
@@ -74,40 +74,125 @@ index 552e71512f9e1ffc9451b5eb3133571ae7daa686..6f33ca08d8b0f10ee7406a7636006e18
  	// log4j wrapper
  	compileOnly 'org.apache.logging.log4j:log4j-api:2.8.1'
 diff --git a/minecraft/minecraft-test/build.gradle b/minecraft/minecraft-test/build.gradle
-index 4cf7a4002f21a7ca1338eebb2b721676c3be3c6d..45b3b81355a81ce97bc8ccd7716bc88acc517450 100644
+deleted file mode 100644
+index bc524f4c17ef9d875eccab7a52c5cc9eeb473a61..0000000000000000000000000000000000000000
 --- a/minecraft/minecraft-test/build.gradle
-+++ b/minecraft/minecraft-test/build.gradle
-@@ -15,7 +15,7 @@ dependencies {
- 	minecraft "com.mojang:minecraft:${minecraft_version}"
- 	mappings "net.fabricmc:yarn:${minecraft_version}+build.3:v2"
- 
++++ /dev/null
+@@ -1,116 +0,0 @@
+-apply plugin: "fabric-loom"
+-
+-sourceCompatibility = JavaVersion.VERSION_17
+-targetCompatibility = JavaVersion.VERSION_17
+-
+-loom {
+-	runConfigs.configureEach {
+-		ideConfigGenerated = true
+-	}
+-}
+-
+-def minecraft_version = "1.19.3";
+-
+-repositories {
+-	mavenCentral()
+-}
+-
+-dependencies {
+-	minecraft "com.mojang:minecraft:${minecraft_version}"
+-	mappings "net.fabricmc:yarn:${minecraft_version}+build.3:v2"
+-
 -	implementation project(":minecraft")
-+	implementation project(":fabric-loader:minecraft") // Toki
- 
- 	// Required for mixin annotation processor
- 	annotationProcessor "org.ow2.asm:asm:${project.asm_version}"
-@@ -55,7 +55,7 @@ dependencies {
- 	productionRuntime "net.fabricmc:intermediary:${minecraft_version}"
- 
- 	// Include the external libraries on the classpath
+-	implementation project(":minecraft").sourceSets.main.output
+-	implementation project(":").sourceSets.main.output
+-
+-	// Required for mixin annotation processor
+-	annotationProcessor "org.ow2.asm:asm:${project.asm_version}"
+-	annotationProcessor "org.ow2.asm:asm-analysis:${project.asm_version}"
+-	annotationProcessor "org.ow2.asm:asm-commons:${project.asm_version}"
+-	annotationProcessor "org.ow2.asm:asm-tree:${project.asm_version}"
+-	annotationProcessor "org.ow2.asm:asm-util:${project.asm_version}"
+-
+-	/**
+-	 * Ensure we are using the mixin version loader is built against to test the AP.
+-	 * Otherwise Loom will default to an older version (due to no mod loader on the mod* configs)
+-	 */
+-	annotationProcessor ("net.fabricmc:sponge-mixin:${project.mixin_version}") {
+-		exclude module: 'launchwrapper'
+-		exclude module: 'guava'
+-	}
+-
+-	testImplementation project(":junit")
+-}
+-
+-test {
+-	useJUnitPlatform()
+-}
+-
+-tasks.withType(JavaCompile).configureEach {
+-	it.options.encoding = "UTF-8"
+-	it.options.release = 17
+-}
+-
+-import net.fabricmc.loom.util.OperatingSystem
+-import groovy.json.JsonSlurper
+-
+-configurations {
+-	productionRuntime {
+-		extendsFrom configurations.minecraftLibraries
+-		extendsFrom configurations.loaderLibraries
+-		extendsFrom configurations.minecraftRuntimeOnlyLibraries
+-	}
+-	productionRuntimeMods
+-}
+-
+-dependencies {
+-	productionRuntime "net.fabricmc:intermediary:${minecraft_version}"
+-
+-	// Include the external libraries on the classpath
 -	def installerJson = new JsonSlurper().parse(rootProject.file("src/main/resources/fabric-installer.json"))
-+	def installerJson = new JsonSlurper().parse(project(":fabric-loader").file("src/main/resources/fabric-installer.json")) // Toki
- 	installerJson.libraries.common.each {
- 		productionRuntime it.name
- 	}
-@@ -65,7 +65,7 @@ dependencies {
- 	productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:0.69.1+1.19.3:testmod"
- }
- 
+-	installerJson.libraries.common.each {
+-		productionRuntime it.name
+-	}
+-
+-	// Use Fabric's auto client test
+-	productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:0.69.1+1.19.3"
+-	productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:0.69.1+1.19.3:testmod"
+-}
+-
 -def loaderJarTask = project(":").tasks.proguardJar
-+def loaderJarTask = project(":fabric-loader").tasks.proguardJar // Toki
- 
- // This is very far beyond loom's API if you copy this, you're on your own.
- task runProductionAutoTestClient(type: JavaExec, dependsOn: [loaderJarTask]) {
-@@ -101,4 +101,4 @@ task runProductionAutoTestClient(type: JavaExec, dependsOn: [loaderJarTask]) {
- 			"-Dfabric.autoTest"
- 		)
- 	}
+-
+-// This is very far beyond loom's API if you copy this, you're on your own.
+-task runProductionAutoTestClient(type: JavaExec, dependsOn: [loaderJarTask]) {
+-	classpath.from configurations.productionRuntime
+-	classpath.from loaderJarTask
+-	mainClass = "net.fabricmc.loader.impl.launch.knot.KnotClient"
+-	workingDir = file("run")
+-
+-	afterEvaluate {
+-		dependsOn downloadAssets
+-	}
+-
+-	doFirst {
+-		classpath.from loom.minecraftProvider.minecraftClientJar
+-		workingDir.mkdirs()
+-
+-		args(
+-			"--assetIndex", loom.minecraftProvider.versionInfo.assetIndex().fabricId(loom.minecraftProvider.minecraftVersion()),
+-			"--assetsDir", new File(loom.files.userCache, "assets").absolutePath,
+-			"--gameDir", workingDir.absolutePath
+-		)
+-
+-		if (OperatingSystem.CURRENT_OS == OperatingSystem.MAC_OS) {
+-			jvmArgs(
+-				"-XstartOnFirstThread"
+-			)
+-		}
+-
+-		def mods = configurations.productionRuntimeMods.files.join(File.pathSeparator)
+-
+-		jvmArgs(
+-			"-Dfabric.addMods=${mods}",
+-			"-Dfabric.autoTest"
+-		)
+-	}
 -}
 \ No newline at end of file
-+}
