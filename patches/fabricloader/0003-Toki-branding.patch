@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Denery <dorofeevij@gmail.com>
+Date: Mon, 1 May 2023 13:11:24 +0300
+Subject: [PATCH] Toki branding
+
+
+diff --git a/build.gradle b/build.gradle
+index d3b1e2208dc7c5202ec09b9e43349f91855fabb6..451fc2e0f404cfe84b9621224132a41baf6ed804 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -93,7 +93,7 @@ dependencies {
+ processResources {
+ 	inputs.property "version", project.version
+ 
+-	filesMatching("fabric.mod.json") {
++	filesMatching("toki.mod.json") { // Toki
+ 		expand "version": project.version
+ 	}
+ }
+diff --git a/src/main/java/net/fabricmc/loader/impl/discovery/ArgumentModCandidateFinder.java b/src/main/java/net/fabricmc/loader/impl/discovery/ArgumentModCandidateFinder.java
+index 5705d5b3b951e422a11c99bf41544cbf8b653dd6..62ee03c60e77877d484e429263aa0406569db57c 100644
+--- a/src/main/java/net/fabricmc/loader/impl/discovery/ArgumentModCandidateFinder.java
++++ b/src/main/java/net/fabricmc/loader/impl/discovery/ArgumentModCandidateFinder.java
+@@ -93,7 +93,7 @@ public class ArgumentModCandidateFinder implements ModCandidateFinder {
+ 				return;
+ 			}
+ 
+-			if (Files.exists(path.resolve("fabric.mod.json"))) { // extracted mod
++			if (Files.exists(path.resolve("toki.mod.json"))) { // extracted mod // Toki
+ 				out.accept(path, requiresRemap);
+ 			} else { // dir containing jars
+ 				try {
+diff --git a/src/main/java/net/fabricmc/loader/impl/discovery/ClasspathModCandidateFinder.java b/src/main/java/net/fabricmc/loader/impl/discovery/ClasspathModCandidateFinder.java
+index 55caa1b1c94bac01b1d74cf1e77f06426c745c5a..e86e256e60291693f810dd9b77d3e645667d57f4 100644
+--- a/src/main/java/net/fabricmc/loader/impl/discovery/ClasspathModCandidateFinder.java
++++ b/src/main/java/net/fabricmc/loader/impl/discovery/ClasspathModCandidateFinder.java
+@@ -48,13 +48,13 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
+ 
+ 			// Search for URLs which point to 'fabric.mod.json' entries, to be considered as mods.
+ 			try {
+-				Enumeration<URL> mods = FabricLauncherBase.getLauncher().getTargetClassLoader().getResources("fabric.mod.json");
++				Enumeration<URL> mods = FabricLauncherBase.getLauncher().getTargetClassLoader().getResources("toki.mod.json"); // Toki
+ 
+ 				while (mods.hasMoreElements()) {
+ 					URL url = mods.nextElement();
+ 
+ 					try {
+-						Path path = LoaderUtil.normalizeExistingPath(UrlUtil.getCodeSource(url, "fabric.mod.json"));
++						Path path = LoaderUtil.normalizeExistingPath(UrlUtil.getCodeSource(url, "toki.mod.json")); // Toki
+ 						List<Path> paths = pathGroups.get(path);
+ 
+ 						if (paths == null) {
+@@ -63,7 +63,7 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
+ 							out.accept(paths, false);
+ 						}
+ 					} catch (UrlConversionException e) {
+-						Log.debug(LogCategory.DISCOVERY, "Error determining location for fabric.mod.json from %s", url, e);
++						Log.debug(LogCategory.DISCOVERY, "Error determining location for toki.mod.json from %s", url, e); // Toki
+ 					}
+ 				}
+ 			} catch (IOException e) {
+diff --git a/src/main/java/net/fabricmc/loader/impl/discovery/ModDiscoverer.java b/src/main/java/net/fabricmc/loader/impl/discovery/ModDiscoverer.java
+index 9d786e0a5c4deef81efac7432bbbe8fe45a81af1..fe6e7942c5405e2fef92231f934010b2032ded99 100644
+--- a/src/main/java/net/fabricmc/loader/impl/discovery/ModDiscoverer.java
++++ b/src/main/java/net/fabricmc/loader/impl/discovery/ModDiscoverer.java
+@@ -268,7 +268,7 @@ public final class ModDiscoverer {
+ 		}
+ 
+ 		private ModCandidate computeDir(Path path) throws IOException, ParseMetadataException {
+-			Path modJson = path.resolve("fabric.mod.json");
++			Path modJson = path.resolve("toki.mod.json");
+ 			if (!Files.exists(modJson)) return null;
+ 
+ 			LoaderModMetadata metadata;
+@@ -282,7 +282,7 @@ public final class ModDiscoverer {
+ 
+ 		private ModCandidate computeJarFile(Path path) throws IOException, ParseMetadataException {
+ 			try (ZipFile zf = new ZipFile(path.toFile())) {
+-				ZipEntry entry = zf.getEntry("fabric.mod.json");
++				ZipEntry entry = zf.getEntry("toki.mod.json"); // Toki
+ 				if (entry == null) return null;
+ 
+ 				LoaderModMetadata metadata;
+@@ -355,7 +355,7 @@ public final class ModDiscoverer {
+ 
+ 			try (ZipInputStream zis = new ZipInputStream(is)) {
+ 				while ((entry = zis.getNextEntry()) != null) {
+-					if (entry.getName().equals("fabric.mod.json")) {
++					if (entry.getName().equals("toki.mod.json")) { // Toki
+ 						metadata = parseMetadata(zis, localPath);
+ 						break;
+ 					}
+diff --git a/src/main/java/net/fabricmc/loader/impl/metadata/ModMetadataParser.java b/src/main/java/net/fabricmc/loader/impl/metadata/ModMetadataParser.java
+index 875c2a104207f6063f7a3abfa0b55b9ce765e3d5..04f88da151ffe280319d568bc907b1f958b82f0a 100644
+--- a/src/main/java/net/fabricmc/loader/impl/metadata/ModMetadataParser.java
++++ b/src/main/java/net/fabricmc/loader/impl/metadata/ModMetadataParser.java
+@@ -80,7 +80,7 @@ public final class ModMetadataParser {
+ 			reader.setRewindEnabled(true);
+ 
+ 			if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+-				throw new ParseMetadataException("Root of \"fabric.mod.json\" must be an object", reader);
++				throw new ParseMetadataException("Root of \"toki.mod.json\" must be an object", reader); // Toki
+ 			}
+ 
+ 			reader.beginObject();
+@@ -128,7 +128,7 @@ public final class ModMetadataParser {
+ 			reader.endObject();
+ 
+ 			if (isDevelopment) {
+-				Log.warn(LogCategory.METADATA, "\"fabric.mod.json\" from mod %s did not have \"schemaVersion\" as first field.", ret.getId());
++				Log.warn(LogCategory.METADATA, "\"toki.mod.json\" from mod %s did not have \"schemaVersion\" as first field.", ret.getId()); // Toki
+ 			}
+ 
+ 			return ret;
+diff --git a/src/main/java/net/fabricmc/loader/impl/metadata/ParseMetadataException.java b/src/main/java/net/fabricmc/loader/impl/metadata/ParseMetadataException.java
+index e4d114abb1fbae64b24327326d26ace4b464b88f..32bdf559ffdf4a9ac27fae273797f76c69ef6861 100644
+--- a/src/main/java/net/fabricmc/loader/impl/metadata/ParseMetadataException.java
++++ b/src/main/java/net/fabricmc/loader/impl/metadata/ParseMetadataException.java
+@@ -48,7 +48,7 @@ public class ParseMetadataException extends Exception {
+ 
+ 	@Override
+ 	public String getMessage() {
+-		String ret = "Error reading fabric.mod.json file for mod at ";
++		String ret = "Error reading toki.mod.json file for mod at "; // Toki
+ 
+ 		if (modPaths == null) {
+ 			ret += "unknown location";
+diff --git a/src/main/java/net/fabricmc/loader/impl/metadata/V1ModMetadata.java b/src/main/java/net/fabricmc/loader/impl/metadata/V1ModMetadata.java
+index d369064dbf8ddf6bdf99a0fb2f6d75dcf234a608..dc5fe1feb432f433987c6b84d477c65af1428e8e 100644
+--- a/src/main/java/net/fabricmc/loader/impl/metadata/V1ModMetadata.java
++++ b/src/main/java/net/fabricmc/loader/impl/metadata/V1ModMetadata.java
+@@ -276,7 +276,7 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
+ 	@Override
+ 	public void emitFormatWarnings() {
+ 		if (hasRequires) {
+-			Log.warn(LogCategory.METADATA, "Mod `%s` (%s) uses 'requires' key in fabric.mod.json, which is not supported - use 'depends'", this.id, this.version);
++			Log.warn(LogCategory.METADATA, "Mod `%s` (%s) uses 'requires' key in toki.mod.json, which is not supported - use 'depends'", this.id, this.version); // Toki
+ 		}
+ 	}
+ 
+diff --git a/src/main/resources/fabric.mod.json b/src/main/resources/toki.mod.json
+similarity index 100%
+rename from src/main/resources/fabric.mod.json
+rename to src/main/resources/toki.mod.json

@@ -1,5 +1,0 @@
-[plugin.info]
-identifier = "test-plugin"
-version = "0.1.0"
-bootstrap = "net.tetratau.testplugin.TestPlugin"
-minecraftVersion = "1.19.2"
