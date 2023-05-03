@@ -415,10 +415,18 @@ index 0000000000000000000000000000000000000000..794e208181d3f640b396d8c1aff0bfd0
 +	}
 +}
 diff --git a/java17/src/main/java/io/papermc/paperclip/Paperclip.java b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff30bc38ce4 100644
+index a10744d8d489b9ef3b6fcad850885c719a66b90f..3dd3b783aa35800dc77b4413efd874526ca52adc 100644
 --- a/java17/src/main/java/io/papermc/paperclip/Paperclip.java
 +++ b/java17/src/main/java/io/papermc/paperclip/Paperclip.java
-@@ -18,6 +18,7 @@ import java.util.HashMap;
+@@ -7,6 +7,7 @@ import java.io.InputStreamReader;
+ import java.lang.invoke.MethodHandle;
+ import java.lang.invoke.MethodHandles;
+ import java.lang.invoke.MethodType;
++import java.net.URISyntaxException;
+ import java.net.URL;
+ import java.net.URLClassLoader;
+ import java.nio.file.FileSystem;
+@@ -18,6 +19,7 @@ import java.util.HashMap;
  import java.util.Map;
  
  public final class Paperclip {
@@ -426,7 +434,7 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff3
  
      public static void main(final String[] args) {
          if (Path.of("").toAbsolutePath().toString().contains("!")) {
-@@ -25,21 +26,31 @@ public final class Paperclip {
+@@ -25,21 +27,31 @@ public final class Paperclip {
              System.exit(1);
          }
  
@@ -464,12 +472,16 @@ index a10744d8d489b9ef3b6fcad850885c719a66b90f..6698942629eb64c08e24a8d942941ff3
              } catch (final Throwable t) {
                  throw Util.sneakyThrow(t);
              }
-@@ -81,11 +92,16 @@ public final class Paperclip {
+@@ -81,11 +93,20 @@ public final class Paperclip {
          final Collection<URL> versionUrls = classpathUrls.get("versions").values();
          final Collection<URL> libraryUrls = classpathUrls.get("libraries").values();
  
 +		Paperclip.versions = versionUrls;
-+		System.setProperty("fabric.gameJarPath", versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).getPath()); // Toky - implement fabric loader
++		try {
++			System.setProperty("fabric.gameJarPath", Path.of(versionUrls.stream().findFirst().orElseThrow(() -> new IllegalStateException("Didn't find any versions!")).toURI()).toAbsolutePath().toString()); // Toky - implement fabric loader
++		} catch (Throwable e) {
++			throw new RuntimeException("Something went wrong while trying to set fabric's game jar path: ", e);
++		}
 +
          final URL[] emptyArray = new URL[0];
 +		/*
