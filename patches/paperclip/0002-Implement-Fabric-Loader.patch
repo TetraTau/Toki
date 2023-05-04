@@ -62,10 +62,10 @@ index 5be37ca9af3dc2d0286c654880ec262d9fcb57af..8acc8f57c82fa3f814359fa36ac70920
 +// Toki end
 diff --git a/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcdffedaf4a
+index 0000000000000000000000000000000000000000..15702855d4d6a650f2a3d2579cf9922ecb5e678f
 --- /dev/null
 +++ b/java17/src/main/java/io/papermc/paperclip/FabricInstaller.java
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,275 @@
 +/*
 + * Copyright (c) 2016, 2017, 2018, 2019 FabricMC
 + *
@@ -285,7 +285,13 @@ index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcd
 +
 +	public static void setupRemappingClasspath(URL[] libraries, LaunchData launchData) {
 +		final List<File> remapClasspath = new ArrayList<>();
-+		remapClasspath.addAll(Arrays.stream(libraries).map(lib -> new File(lib.getPath())).toList());
++		remapClasspath.addAll(Arrays.stream(libraries).map(lib -> {
++			try {
++				return new File(lib.toURI());
++			} catch (URISyntaxException e) {
++				throw new RuntimeException("Error while setting up remapping classpath: ", e);
++			}
++		}).toList());
 +		final List<Path> classPath = new ArrayList<>();
 +		try {
 +			readManifest(launchData.launchJar(), classPath);
@@ -293,12 +299,22 @@ index 0000000000000000000000000000000000000000..e2946a39b5d4b1772756f655a09a6bcd
 +		} catch (IOException e) {
 +			throw new RuntimeException("Something went wrong while reading server launch jar manifest for the remap classpath", e);
 +		}
-+		remapClasspath.add(new File(Paperclip.versions.stream().findFirst().get().getPath()));
++		try {
++			remapClasspath.add(new File(Paperclip.versions.stream().findFirst().get().toURI()));
++		} catch (URISyntaxException e) {
++			throw new RuntimeException("Error while setting up remapping classpath: ", e);
++		}
 +		System.setProperty("fabric.remapClasspathFile", remapClasspath.stream().map(File::getAbsolutePath).collect(Collectors.joining(File.pathSeparator)));
 +	}
 +
 +	public static void setLibraryURLs(final URL[] libraries) {
-+		final String s = Json.make(Arrays.stream(libraries).map(URL::getPath).toList()).toString();
++		final String s = Json.make(Arrays.stream(libraries).map(url -> {
++			try {
++				return Path.of(url.toURI()).toAbsolutePath().toString();
++			} catch (final Throwable e) {
++				throw new RuntimeException("Couldn't setup library URLs for the Fabric loader: ", e);
++			}
++ 		}).toList()).toString();
 +		System.setProperty("toki.libraries", s); // Used in MinecraftGameProvider#unlockClassPath
 +	}
 +

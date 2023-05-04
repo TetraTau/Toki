@@ -60,7 +60,7 @@ index b3b4659f38248abb999b1057cf7d8a8dfa2cc198..048c484893f3d5e31548f44145dcf4b5
  		if (envType == EnvType.CLIENT && targetClass.contains("Applet")) {
  			targetClass = "net.fabricmc.loader.impl.game.minecraft.applet.AppletMain";
 diff --git a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
-index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35bfab3bc0 100644
+index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..35862bbedf9f164013d34434d72216d35c369152 100644
 --- a/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
 +++ b/minecraft/src/main/java/net/fabricmc/loader/impl/game/minecraft/patch/EntrypointPatch.java
 @@ -107,7 +107,7 @@ public class EntrypointPatch extends GamePatch {
@@ -90,12 +90,17 @@ index 8858165dcc7a0cc6fabf0ddd61544f3a07295afc..ace57703416fd91dc1feaf3a66988f35
  						return false;
  					}
  
-@@ -396,7 +396,7 @@ public class EntrypointPatch extends GamePatch {
+@@ -396,7 +396,12 @@ public class EntrypointPatch extends GamePatch {
  								return false;
  							}
  
 -							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljava/lang/Thread;");
-+							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[2].getDescriptor().equals("Ljava/lang/Thread;"); // Toki - change constructor finding
++							// Toki start
++							// 1.19.3 and higher
++							return constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[2].getDescriptor().equals("Ljava/lang/Thread;")
++									// 1.19.2 support
++									|| constructorType.getArgumentTypes()[0].getDescriptor().equals("Ljoptsimple/OptionSet;") && constructorType.getArgumentTypes()[3].getDescriptor().equals("Ljava/lang/Thread;");
++							// Toki end
  						}
  
  						return false;
