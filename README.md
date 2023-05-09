@@ -24,17 +24,19 @@ It is also used in the Toki's buildscript for building purposes.
 This project exists to solve two problems: *Hybrid server software problem* and *Plugin API limitation problem*.
 
 ### Hybrid server software problem
-Server admins often want to have modded servers which 1) support bukkit plugins 2) have good performance. \
-The issue with hybrid server software is stability and support, almost none of mods or plugins provide an official support for hybrid server software, \
-so for now the sanest solution is to use the vanilla server software with mods which 1) replace plugins 2) optimize the server. \
-The main issue there is optimization mods, which usually don't do invasive changes for the sake of performance. \
+Server admins often want to have modded servers which 1) support bukkit plugins 2) have good performance.
+
+The issue with hybrid server software is stability and support, almost none of mods or plugins provide an official support for hybrid server software, so for now the sanest solution is to use the vanilla server software with mods which 1) replace plugins 2) optimize the server.
+
+The main issue there is optimization mods, which usually don't do invasive changes for the sake of performance. 
 On the other hand, Paper does such changes using its patch system and performs better than almost all of the server optimization modpacks,
 so the solution this project provides is providing an easy to use toolchain and APIs for making / porting fabric mods to it.
 
 ### Plugin API limitiation problem
-Usually plugins can't modify Minecraft server internals, and if they do, they do it badly. \
-Plugins don't have an official support of modding tools like Mixins and Access wideners, \
-on one hand it makes plugins more compatible with each other, on the other hand it limits plugin possibilites. \
+Usually plugins can't modify Minecraft server internals, and if they do, they do it badly.
+Plugins don't have an official support of modding tools like Mixins and Access wideners,
+on one hand it makes plugins more compatible with each other, on the other hand it limits plugin possibilites.
+
 So if you're a plugin developer willing to do more than usual plugins are capable of, you can use this platform, make mods and run them on Paper or any other Paper fork.
 
 ## TODOs / Plans
@@ -42,3 +44,6 @@ So if you're a plugin developer willing to do more than usual plugins are capabl
 - [x] Create a Gradle plugin for developers to be able to develop mods with this project.
 - [ ] Create a Toki API mod which has a compatibility with the Fabric API on the client side. (Registry sync)
 - [ ] Make Bukkit API flexible enough to handle modded content.
+
+## Contributing and Technical documentation
+See [this file](https://github.com/TetraTau/Toki/blob/master/TECH_DOCS_AND_CONTRIBUTING.md).
