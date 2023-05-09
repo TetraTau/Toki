@@ -2,7 +2,8 @@
 
 # Toki
 
-Toki is a server-side modding platform which makes it possible to make and run [Fabric](https://github.com/FabricMC/fabric) mods for the [Paper](https://github.com/PaperMC/Paper) server software. \
+Toki is a server-side modding platform which makes it possible to make and run [Fabric](https://github.com/FabricMC/fabric) mods on the [Paper](https://github.com/PaperMC/Paper) server software.
+
 See the [Toki example mod](https://github.com/TetraTau/toki-example-mod/tree/master) as a reference.
 
 ### Join [discord](https://discord.gg/upTtNyvkNf) for discussion
