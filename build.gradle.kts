@@ -55,6 +55,10 @@ subprojects {
 
 
 tasks {
+    named("createPaperclipJar") {
+        group = "toki"
+        dependsOn(project(":paperclip").tasks.named("jar"))
+    }
 
     // TODO fancy patch configuration in Tokimak Core?
     fun createPatchTasks(repoUrl: String, projectName: String, patchDirName: String, taskName: String, refPropertyName: String) {
